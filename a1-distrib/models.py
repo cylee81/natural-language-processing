@@ -31,8 +31,17 @@ class UnigramFeatureExtractor(FeatureExtractor):
     and any additional preprocessing you want to do.
     """
     def __init__(self, indexer: Indexer):
-        raise Exception("Must be implemented")
+        self.indexer = indexer
+        
+    def get_indexer(self):
+        return self.indexer
 
+    def extract_features(self, sentence: List[str], add_to_indexer: bool=False) -> Counter:
+        features = []
+        for word in sentence:
+            feature = self.indexer.add_and_get_index(word, add=add_to_indexer)
+            features.append(feature)
+        return Counter(features)
 
 class BigramFeatureExtractor(FeatureExtractor):
     """
