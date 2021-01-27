@@ -2,6 +2,7 @@
 
 from sentiment_data import *
 from utils import *
+import numpy as np
 
 from collections import Counter
 
@@ -32,7 +33,7 @@ class UnigramFeatureExtractor(FeatureExtractor):
     """
     def __init__(self, indexer: Indexer):
         self.indexer = indexer
-        
+
     def get_indexer(self):
         return self.indexer
 
@@ -48,7 +49,20 @@ class BigramFeatureExtractor(FeatureExtractor):
     Bigram feature extractor analogous to the unigram one.
     """
     def __init__(self, indexer: Indexer):
-        raise Exception("Must be implemented")
+        self.indexer = indexer
+    
+    def get_indexer(self):
+        return self.indexer
+
+    def extract_features(self, sentence: List[str], add_to_indexer: bool=False) -> Counter:
+        features = []
+        for i_word in range(len(sentence)-1):
+            feature = self.indexer.add_and_get_index(
+                " ".join(sentence[i_word:i_word+2]), 
+                add=add_to_indexer
+            )
+            features.append(feature)
+        return Counter(features)
 
 
 class BetterFeatureExtractor(FeatureExtractor):
@@ -85,9 +99,25 @@ class PerceptronClassifier(SentimentClassifier):
     superclass. Hint: you'll probably need this class to wrap both the weight vector and featurizer -- feel free to
     modify the constructor to pass these in.
     """
-    def __init__(self):
-        raise Exception("Must be implemented")
+    def __init__(self, counter, featurizer):
 
+        self.weights = {}
+        for k in list(counter.keys()):
+            self.weights = {k: 0}
+            
+        self.featurizer = featurizer
+    
+    def predict(self, sentence: List[str]) -> int:
+
+        features = self.featurizer(sentence)
+        for feature in list(features.keys()):
+            sum_prob = self.weights[feature]*features[feature]
+        
+        prob = sum_prob / len(features)
+        if prob >= 0.5:
+            return 1
+        else:
+            return 0
 
 class LogisticRegressionClassifier(SentimentClassifier):
     """
@@ -95,9 +125,28 @@ class LogisticRegressionClassifier(SentimentClassifier):
     superclass. Hint: you'll probably need this class to wrap both the weight vector and featurizer -- feel free to
     modify the constructor to pass these in.
     """
-    def __init__(self):
-        raise Exception("Must be implemented")
+    def __init__(self, counter, featurizer):
 
+        self.weights = {}
+        for k in list(counter.keys()):
+            self.weights = {k: 0}
+
+        self.featurizer = featurizer
+
+    def predict(self, sentence: List[str]) -> int:
+
+        features = self.featurizer(sentence)
+        for feature in list(features.keys()):
+            sum_prob = self.weights[feature]*features[feature]
+
+        log_sum_prob = np.exp(sum_prob) / (1+np.exp(sum_prob))
+
+        prob = log_sum_prob / len(features)
+
+        if prob >= 0.5:
+            return 1
+        else:
+            return 0
 
 def train_perceptron(train_exs: List[SentimentExample], feat_extractor: FeatureExtractor) -> PerceptronClassifier:
     """
