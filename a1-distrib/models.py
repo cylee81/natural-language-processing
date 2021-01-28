@@ -114,14 +114,15 @@ class PerceptronClassifier(SentimentClassifier):
             sum_prob = self.weights[feature]*features[feature]
         
         prob = sum_prob / len(features)
-        if prob >= 0.5:
+        if prob > 0:
             return 1
         else:
-            return 0
+            return -1
     
-    def update(self, lr, pred, label):
+    def update(self, lr, sentence, label):
         for k, v in self.weights.items():
-            self.weights[k] += lr * label * pred[k]
+            x = self.featurizer[sentence]
+            self.weights[k] += lr * label * x[k]
 
 
 class LogisticRegressionClassifier(SentimentClassifier):
@@ -148,10 +149,16 @@ class LogisticRegressionClassifier(SentimentClassifier):
 
         prob = log_sum_prob / len(features)
 
-        if prob >= 0.5:
+        if prob > 0:
             return 1
         else:
-            return 0
+            return -1
+
+    def update(self, lr, sentence, label):
+        for k, v in self.weights.items():
+            x = self.featurizer[sentence]
+            log_term = np.exp(self.weights[k] * x[k])
+            self.weights[k] += lr * label * x[k] * log_term / (1+log_term)
 
 def train_perceptron(train_exs: List[SentimentExample], feat_extractor: FeatureExtractor) -> PerceptronClassifier:
     """
@@ -175,8 +182,9 @@ def train_perceptron(train_exs: List[SentimentExample], feat_extractor: FeatureE
             sentence = train_obj.words
             label = train_obj.label
             pred = model.predict(sentence)
-            if label != pred:
-                model.update(lr, pred, label)
+            if pred != label:
+                model.update(lr, sentence, label)
+
     return model
 
 def train_logistic_regression(train_exs: List[SentimentExample], feat_extractor: FeatureExtractor) -> LogisticRegressionClassifier:
@@ -186,8 +194,26 @@ def train_logistic_regression(train_exs: List[SentimentExample], feat_extractor:
     :param feat_extractor: feature extractor to use
     :return: trained LogisticRegressionClassifier model
     """
-    raise Exception("Must be implemented")
 
+    epochs = 10
+    lr = 0.001
+    keys = []
+
+    for sentence in train_exs:
+        counter = feat_extractor(sentence)
+        keys.append(counter.keys())
+
+    model = PerceptronClassifier(list(set(keys)), feat_extractor)
+
+    for epoch in range(epochs):
+        for train_obj in train_exs:
+            sentence = train_obj.words
+            label = train_obj.label
+            pred = model.predict(sentence)
+            if label != pred:
+                model.update(lr, pred, label)
+                
+    return model
 
 def train_model(args, train_exs: List[SentimentExample], dev_exs: List[SentimentExample]) -> SentimentClassifier:
     """
