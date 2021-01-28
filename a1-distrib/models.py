@@ -99,12 +99,12 @@ class PerceptronClassifier(SentimentClassifier):
     superclass. Hint: you'll probably need this class to wrap both the weight vector and featurizer -- feel free to
     modify the constructor to pass these in.
     """
-    def __init__(self, counter, featurizer):
+    def __init__(self, keys, featurizer):
 
         self.weights = {}
-        for k in list(counter.keys()):
+        for k in keys:
             self.weights = {k: 0}
-            
+
         self.featurizer = featurizer
     
     def predict(self, sentence: List[str]) -> int:
@@ -118,6 +118,11 @@ class PerceptronClassifier(SentimentClassifier):
             return 1
         else:
             return 0
+    
+    def update(self, lr, pred, label):
+        for k, v in self.weights.items():
+            self.weights[k] += lr * label * pred[k]
+
 
 class LogisticRegressionClassifier(SentimentClassifier):
     """
@@ -125,10 +130,10 @@ class LogisticRegressionClassifier(SentimentClassifier):
     superclass. Hint: you'll probably need this class to wrap both the weight vector and featurizer -- feel free to
     modify the constructor to pass these in.
     """
-    def __init__(self, counter, featurizer):
+    def __init__(self, keys, featurizer):
 
         self.weights = {}
-        for k in list(counter.keys()):
+        for k in keys:
             self.weights = {k: 0}
 
         self.featurizer = featurizer
@@ -155,8 +160,24 @@ def train_perceptron(train_exs: List[SentimentExample], feat_extractor: FeatureE
     :param feat_extractor: feature extractor to use
     :return: trained PerceptronClassifier model
     """
-    raise Exception("Must be implemented")
+    epochs = 10
+    lr = 0.001
+    keys = []
 
+    for sentence in train_exs:
+        counter = feat_extractor(sentence)
+        keys.append(counter.keys())
+
+    model = PerceptronClassifier(list(set(keys)), feat_extractor)
+
+    for epoch in range(epochs):
+        for train_obj in train_exs:
+            sentence = train_obj.words
+            label = train_obj.label
+            pred = model.predict(sentence)
+            if label != pred:
+                model.update(lr, pred, label)
+    return model
 
 def train_logistic_regression(train_exs: List[SentimentExample], feat_extractor: FeatureExtractor) -> LogisticRegressionClassifier:
     """
