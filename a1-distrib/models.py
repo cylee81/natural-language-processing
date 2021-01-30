@@ -3,7 +3,7 @@
 from sentiment_data import *
 from utils import *
 import numpy as np
-
+import random
 from collections import Counter
 
 class FeatureExtractor(object):
@@ -41,7 +41,8 @@ class UnigramFeatureExtractor(FeatureExtractor):
         features = []
         for word in sentence:
             feature = self.indexer.add_and_get_index(word, add=add_to_indexer)
-            features.append(feature)
+            if feature != -1:
+                features.append(feature)
         return Counter(features)
 
 class BigramFeatureExtractor(FeatureExtractor):
@@ -101,28 +102,39 @@ class PerceptronClassifier(SentimentClassifier):
     """
     def __init__(self, keys, featurizer):
 
-        self.weights = {}
-        for k in keys:
-            self.weights = {k: 0}
-
+        self.weights = np.zeros(max(keys)+1)
         self.featurizer = featurizer
     
     def predict(self, sentence: List[str]) -> int:
-
-        features = self.featurizer(sentence)
-        for feature in list(features.keys()):
-            sum_prob = self.weights[feature]*features[feature]
         
-        prob = sum_prob / len(features)
-        if prob > 0:
+        array = np.zeros(self.weights.shape)
+        x = self.featurizer.extract_features(sentence, False)
+        
+        for k, v in x.items():
+            array[k] = v
+
+        sum_prob = np.sum(self.weights*array)
+
+        if sum_prob > 0.5:
             return 1
         else:
-            return -1
+            return 0
     
     def update(self, lr, sentence, label):
-        for k, v in self.weights.items():
-            x = self.featurizer[sentence]
-            self.weights[k] += lr * label * x[k]
+        array = np.zeros(self.weights.shape)
+        x = self.featurizer.extract_features(sentence)
+        for k, v in x.items():
+            array[k] = v
+
+        if label == 0:
+            self.weights -= lr * array
+        else:
+            self.weights += lr * array
+
+        # for k, v in self.weights.items():
+        #     x = self.featurizer.extract_features(sentence)
+        #     self.weights[k] += lr * label * x[k]
+        #     print(self.weights)
 
 
 class LogisticRegressionClassifier(SentimentClassifier):
@@ -147,9 +159,7 @@ class LogisticRegressionClassifier(SentimentClassifier):
 
         log_sum_prob = np.exp(sum_prob) / (1+np.exp(sum_prob))
 
-        prob = log_sum_prob / len(features)
-
-        if prob > 0:
+        if log_sum_prob > 0.5:
             return 1
         else:
             return -1
@@ -167,24 +177,27 @@ def train_perceptron(train_exs: List[SentimentExample], feat_extractor: FeatureE
     :param feat_extractor: feature extractor to use
     :return: trained PerceptronClassifier model
     """
-    epochs = 10
-    lr = 0.001
+    epochs = 30
+    lr = 0.015
     keys = []
 
     for sentence in train_exs:
-        counter = feat_extractor(sentence)
-        keys.append(counter.keys())
-
+        counter = feat_extractor.extract_features(sentence.words, True)
+        keys.extend(list(counter.keys()))
+    
+    # print(list(set(keys)))
     model = PerceptronClassifier(list(set(keys)), feat_extractor)
 
-    for epoch in range(epochs):
+    for epoch in range(1, epochs+1):
+        if epoch % 10 == 0:
+            lr /= 10
+        random.shuffle(train_exs)
         for train_obj in train_exs:
             sentence = train_obj.words
             label = train_obj.label
             pred = model.predict(sentence)
             if pred != label:
                 model.update(lr, sentence, label)
-
     return model
 
 def train_logistic_regression(train_exs: List[SentimentExample], feat_extractor: FeatureExtractor) -> LogisticRegressionClassifier:
@@ -198,9 +211,10 @@ def train_logistic_regression(train_exs: List[SentimentExample], feat_extractor:
     epochs = 10
     lr = 0.001
     keys = []
+    random.seed(71)
 
     for sentence in train_exs:
-        counter = feat_extractor(sentence)
+        counter = feat_extractor(sentence, True)
         keys.append(counter.keys())
 
     model = PerceptronClassifier(list(set(keys)), feat_extractor)
