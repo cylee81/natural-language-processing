@@ -109,7 +109,7 @@ class PerceptronClassifier(SentimentClassifier):
         
         array = np.zeros(self.weights.shape)
         x = self.featurizer.extract_features(sentence, False)
-        
+
         for k, v in x.items():
             array[k] = v
 
@@ -123,6 +123,7 @@ class PerceptronClassifier(SentimentClassifier):
     def update(self, lr, sentence, label):
         array = np.zeros(self.weights.shape)
         x = self.featurizer.extract_features(sentence)
+
         for k, v in x.items():
             array[k] = v
 
@@ -130,12 +131,6 @@ class PerceptronClassifier(SentimentClassifier):
             self.weights -= lr * array
         else:
             self.weights += lr * array
-
-        # for k, v in self.weights.items():
-        #     x = self.featurizer.extract_features(sentence)
-        #     self.weights[k] += lr * label * x[k]
-        #     print(self.weights)
-
 
 class LogisticRegressionClassifier(SentimentClassifier):
     """
@@ -185,7 +180,6 @@ def train_perceptron(train_exs: List[SentimentExample], feat_extractor: FeatureE
         counter = feat_extractor.extract_features(sentence.words, True)
         keys.extend(list(counter.keys()))
     
-    # print(list(set(keys)))
     model = PerceptronClassifier(list(set(keys)), feat_extractor)
 
     for epoch in range(1, epochs+1):
