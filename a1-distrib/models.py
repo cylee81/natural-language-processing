@@ -6,6 +6,7 @@ import numpy as np
 import random
 from collections import Counter
 
+
 class FeatureExtractor(object):
     """
     Feature extraction base type. Takes a sentence and returns an indexed list of features.
@@ -140,30 +141,40 @@ class LogisticRegressionClassifier(SentimentClassifier):
     """
     def __init__(self, keys, featurizer):
 
-        self.weights = {}
-        for k in keys:
-            self.weights = {k: 0}
-
+        self.weights = np.zeros(max(keys)+1)
         self.featurizer = featurizer
 
     def predict(self, sentence: List[str]) -> int:
 
-        features = self.featurizer(sentence)
-        for feature in list(features.keys()):
-            sum_prob = self.weights[feature]*features[feature]
+        array = np.zeros(self.weights.shape)
+        x = self.featurizer.extract_features(sentence, False)
 
-        log_sum_prob = np.exp(sum_prob) / (1+np.exp(sum_prob))
+        for k, v in x.items():
+            array[k] = v
 
-        if log_sum_prob > 0.5:
+        sum_prob = np.sum(self.weights*array)
+        yhat = np.exp(sum_prob) / (1+np.exp(sum_prob))
+
+        if yhat > 0.5:
             return 1
         else:
-            return -1
+            return 0
 
     def update(self, lr, sentence, label):
-        for k, v in self.weights.items():
-            x = self.featurizer[sentence]
-            log_term = np.exp(self.weights[k] * x[k])
-            self.weights[k] += lr * label * x[k] * log_term / (1+log_term)
+
+        array = np.zeros(self.weights.shape)
+        x = self.featurizer.extract_features(sentence)
+
+        for k, v in x.items():
+            array[k] = v
+
+        sum_prob = np.sum(self.weights*array)
+        yhat = np.exp(sum_prob) / (1+np.exp(sum_prob))
+
+        if label == 0:
+            self.weights -= lr * array * (yhat - 1)
+        else:
+            self.weights += lr * array * (yhat - 1)
 
 def train_perceptron(train_exs: List[SentimentExample], feat_extractor: FeatureExtractor) -> PerceptronClassifier:
     """
@@ -213,7 +224,9 @@ def train_logistic_regression(train_exs: List[SentimentExample], feat_extractor:
 
     model = PerceptronClassifier(list(set(keys)), feat_extractor)
 
-    for epoch in range(epochs):
+    for epoch in range(1, epochs+1):
+        if epoch % 10 == 0:
+            lr /= 10
         for train_obj in train_exs:
             sentence = train_obj.words
             label = train_obj.label
