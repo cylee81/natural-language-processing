@@ -268,8 +268,8 @@ def train_logistic_regression(train_exs: List[SentimentExample], feat_extractor:
     :param feat_extractor: feature extractor to use
     :return: trained LogisticRegressionClassifier model
     """
-    epochs = 30
-    lr = 1
+    epochs = 35
+    lr0 = 1
     keys = []
     random.seed(71)
 
@@ -278,14 +278,15 @@ def train_logistic_regression(train_exs: List[SentimentExample], feat_extractor:
         keys.extend(list(counter.keys()))
 
     model = LogisticRegressionClassifier(list(set(keys)), feat_extractor)
-    dev_path = 'data/dev.txt'
-    dev_exs = read_sentiment_examples(dev_path)
-    train_path = 'data/train.txt'
-    train_exs = read_sentiment_examples(train_path)
+    # dev_path = 'data/dev.txt'
+    # dev_exs = read_sentiment_examples(dev_path)
+    # train_path = 'data/train.txt'
+    # train_exs = read_sentiment_examples(train_path)
 
     for epoch in range(1, epochs+1):
-        if epoch % 8 == 0:
-            lr /= 10
+        # if epoch % 10 == 0:
+        #     lr /= 10
+        lr = lr0 * 0.5 ** np.floor(epoch / 8) 
         random.shuffle(train_exs)
         for train_obj in train_exs:
             sentence = train_obj.words
