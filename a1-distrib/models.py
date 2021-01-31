@@ -9,6 +9,7 @@ from collections import Counter
 from nltk.corpus import stopwords  
 from nltk.tokenize import word_tokenize
 import math
+# from sentiment_classifier import evaluate
 
 class FeatureExtractor(object):
     """
@@ -44,9 +45,9 @@ class UnigramFeatureExtractor(FeatureExtractor):
     def extract_features(self, sentence: List[str], add_to_indexer: bool=False) -> Counter:
         features = []
         for word in sentence:
-            feature = self.indexer.add_and_get_index(word, add=add_to_indexer)
-            if feature != -1:
-                features.append(feature)
+            if not word.isalpha(): continue
+            feature = self.indexer.add_and_get_index(word.lower(), add=add_to_indexer)
+            features.append(feature)
         return Counter(features)
 
 class BigramFeatureExtractor(FeatureExtractor):
@@ -63,7 +64,7 @@ class BigramFeatureExtractor(FeatureExtractor):
         features = []
         for i_word in range(len(sentence)-1):
             feature = self.indexer.add_and_get_index(
-                " ".join(sentence[i_word:i_word+2]), 
+                "|".join(sentence[i_word:i_word+2]), 
                 add=add_to_indexer
             )
             features.append(feature)
@@ -100,7 +101,7 @@ class BetterFeatureExtractor(FeatureExtractor):
         features = []
 
         for word in sentence:
-            if word in self.stopwords: continue
+            # if word in self.stopwords: continue
             feature = self.indexer.add_and_get_index(word, add=add_to_indexer)
             features.append(feature)
         counter = {}
@@ -156,7 +157,7 @@ class PerceptronClassifier(SentimentClassifier):
         for k, v in x.items():
             array[k] = v
 
-        sum_prob = np.sum(self.weights*array)
+        sum_prob = np.dot(self.weights, array)
 
         if sum_prob > 0.5:
             return 1
@@ -183,7 +184,7 @@ class LogisticRegressionClassifier(SentimentClassifier):
     """
     def __init__(self, keys, featurizer):
 
-        self.weights = np.zeros(max(keys)+1)
+        self.weights = np.random.random(max(keys)+1)
         self.featurizer = featurizer
 
     def predict(self, sentence: List[str]) -> int:
@@ -227,8 +228,8 @@ def train_perceptron(train_exs: List[SentimentExample], feat_extractor: FeatureE
     :param feat_extractor: feature extractor to use
     :return: trained PerceptronClassifier model
     """
-    epochs = 30
-    lr = 0.01
+    epochs = 40
+    lr = 0.1
     keys = []
     random.seed(71)
 
@@ -237,6 +238,10 @@ def train_perceptron(train_exs: List[SentimentExample], feat_extractor: FeatureE
         keys.extend(list(counter.keys()))
     
     model = PerceptronClassifier(list(set(keys)), feat_extractor)
+    # dev_path = 'data/dev.txt'
+    # dev_exs = read_sentiment_examples(dev_path)
+    # train_path = 'data/train.txt'
+    # train_exs = read_sentiment_examples(train_path)
 
     for epoch in range(1, epochs+1):
         if epoch % 10 == 0:
@@ -248,6 +253,12 @@ def train_perceptron(train_exs: List[SentimentExample], feat_extractor: FeatureE
             pred = model.predict(sentence)
             if pred != label:
                 model.update(lr, sentence, label)
+        
+        # print(f"epoch: {epoch}")
+        # print("=====Train Accuracy=====")
+        # evaluate(model, train_exs)
+        # print("=====Dev Accuracy=====")
+        # evaluate(model, dev_exs)
     return model
 
 def train_logistic_regression(train_exs: List[SentimentExample], feat_extractor: FeatureExtractor) -> LogisticRegressionClassifier:
@@ -257,8 +268,8 @@ def train_logistic_regression(train_exs: List[SentimentExample], feat_extractor:
     :param feat_extractor: feature extractor to use
     :return: trained LogisticRegressionClassifier model
     """
-    epochs = 35
-    lr = 0.012
+    epochs = 50
+    lr = 1
     keys = []
     random.seed(71)
 
@@ -267,17 +278,29 @@ def train_logistic_regression(train_exs: List[SentimentExample], feat_extractor:
         keys.extend(list(counter.keys()))
 
     model = LogisticRegressionClassifier(list(set(keys)), feat_extractor)
+    # dev_path = 'data/dev.txt'
+    # dev_exs = read_sentiment_examples(dev_path)
+    # train_path = 'data/train.txt'
+    # train_exs = read_sentiment_examples(train_path)
 
     for epoch in range(1, epochs+1):
-        if epoch % 12 == 0:
-            lr /= 10
+        if epoch % 5 == 0:
+            lr /= 5
         random.shuffle(train_exs)
         for train_obj in train_exs:
             sentence = train_obj.words
             label = train_obj.label
             pred = model.predict(sentence)
+
             if label != pred:
                 model.update(lr, sentence, label)
+        
+        # print(f"epoch: {epoch}")
+        # print("=====Train Accuracy=====")
+        # evaluate(model, train_exs)
+        # print("=====Dev Accuracy=====")
+        # evaluate(model, dev_exs)
+
     return model
 
 def train_model(args, train_exs: List[SentimentExample], dev_exs: List[SentimentExample]) -> SentimentClassifier:
