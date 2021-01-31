@@ -9,7 +9,6 @@ from collections import Counter
 from nltk.corpus import stopwords  
 from nltk.tokenize import word_tokenize
 import math
-from tqdm import tqdm 
 
 class FeatureExtractor(object):
     """
@@ -259,7 +258,7 @@ def train_logistic_regression(train_exs: List[SentimentExample], feat_extractor:
     :return: trained LogisticRegressionClassifier model
     """
     epochs = 35
-    lr = 0.015
+    lr = 0.012
     keys = []
     random.seed(71)
 
@@ -269,7 +268,7 @@ def train_logistic_regression(train_exs: List[SentimentExample], feat_extractor:
 
     model = LogisticRegressionClassifier(list(set(keys)), feat_extractor)
 
-    for epoch in tqdm(range(1, epochs+1)):
+    for epoch in range(1, epochs+1):
         if epoch % 12 == 0:
             lr /= 10
         random.shuffle(train_exs)
@@ -303,9 +302,7 @@ def train_model(args, train_exs: List[SentimentExample], dev_exs: List[Sentiment
     elif args.feats == "BETTER":
         # Add additional preprocessing code here
         feat_extractor = BetterFeatureExtractor(Indexer())
-        print("settting")
         feat_extractor.set_word_freq(train_exs)
-        print("finish")
     else:
         raise Exception("Pass in UNIGRAM, BIGRAM, or BETTER to run the appropriate system")
 
