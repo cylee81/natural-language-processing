@@ -152,7 +152,7 @@ class LogisticRegressionClassifier(SentimentClassifier):
         for k, v in x.items():
             array[k] = v
 
-        sum_prob = np.sum(self.weights*array)
+        sum_prob = np.dot(self.weights, array)
         yhat = np.exp(sum_prob) / (1+np.exp(sum_prob))
 
         if yhat > 0.5:
@@ -168,13 +168,15 @@ class LogisticRegressionClassifier(SentimentClassifier):
         for k, v in x.items():
             array[k] = v
 
-        sum_prob = np.sum(self.weights*array)
-        yhat = np.exp(sum_prob) / (1+np.exp(sum_prob))
+        sum_prob = np.dot(self.weights, array)
+        # yhat = np.exp(sum_prob) / (1+np.exp(sum_prob))
 
         if label == 0:
-            self.weights -= lr * array * (yhat - 1)
+            yhat = 1 / (1+np.exp(sum_prob))
+            self.weights -= lr * array * (1 - yhat)
         else:
-            self.weights += lr * array * (yhat - 1)
+            yhat = np.exp(sum_prob) / (1+np.exp(sum_prob))
+            self.weights += lr * array * (1 - yhat)
 
 def train_perceptron(train_exs: List[SentimentExample], feat_extractor: FeatureExtractor) -> PerceptronClassifier:
     """
@@ -184,8 +186,9 @@ def train_perceptron(train_exs: List[SentimentExample], feat_extractor: FeatureE
     :return: trained PerceptronClassifier model
     """
     epochs = 30
-    lr = 0.015
+    lr = 0.01
     keys = []
+    random.seed(71)
 
     for sentence in train_exs:
         counter = feat_extractor.extract_features(sentence.words, True)
@@ -213,27 +216,27 @@ def train_logistic_regression(train_exs: List[SentimentExample], feat_extractor:
     :return: trained LogisticRegressionClassifier model
     """
 
-    epochs = 10
-    lr = 0.001
+    epochs = 35
+    lr = 0.015
     keys = []
     random.seed(71)
 
     for sentence in train_exs:
-        counter = feat_extractor(sentence, True)
-        keys.append(counter.keys())
+        counter = feat_extractor.extract_features(sentence.words, True)
+        keys.extend(list(counter.keys()))
 
-    model = PerceptronClassifier(list(set(keys)), feat_extractor)
+    model = LogisticRegressionClassifier(list(set(keys)), feat_extractor)
 
     for epoch in range(1, epochs+1):
-        if epoch % 10 == 0:
+        if epoch % 12 == 0:
             lr /= 10
+        random.shuffle(train_exs)
         for train_obj in train_exs:
             sentence = train_obj.words
             label = train_obj.label
             pred = model.predict(sentence)
             if label != pred:
-                model.update(lr, pred, label)
-                
+                model.update(lr, sentence, label)
     return model
 
 def train_model(args, train_exs: List[SentimentExample], dev_exs: List[SentimentExample]) -> SentimentClassifier:
