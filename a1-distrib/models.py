@@ -4,8 +4,12 @@ from sentiment_data import *
 from utils import *
 import numpy as np
 import random
+import nltk
 from collections import Counter
-
+from nltk.corpus import stopwords  
+from nltk.tokenize import word_tokenize
+import math
+from tqdm import tqdm 
 
 class FeatureExtractor(object):
     """
@@ -72,8 +76,47 @@ class BetterFeatureExtractor(FeatureExtractor):
     Better feature extractor...try whatever you can think of!
     """
     def __init__(self, indexer: Indexer):
-        raise Exception("Must be implemented")
+        self.indexer = indexer
+        self.word_freq = Counter()
+        self.stopwords = stopwords.words('english')
+        self.n_docs = 0
+    
+    def get_indexer(self):
+        return self.indexer
 
+    @staticmethod
+    def tfidf(count, counter, n_docs, n_doc_with_word):
+        tf = count / sum(counter.values())
+        idf = math.log(n_docs/ (1 + n_doc_with_word))
+        return tf * idf
+
+    def set_word_freq(self, train_exs: List[SentimentExample]):
+        self.n_docs = len(train_exs)
+        for sentence in train_exs:
+            word_list = list(set(sentence.words))
+            for word in word_list:
+                self.word_freq[word] += 1
+
+    def extract_features(self, sentence: List[str], add_to_indexer: bool=False) -> Counter:
+        features = []
+
+        for word in sentence:
+            if word in self.stopwords: continue
+            feature = self.indexer.add_and_get_index(word, add=add_to_indexer)
+            features.append(feature)
+        counter = {}
+        old_counter = Counter(features)
+
+        if add_to_indexer: return old_counter
+
+        for k, v in old_counter.items():
+            counter[k] = BetterFeatureExtractor.tfidf(
+                v,
+                old_counter,
+                self.n_docs,
+                self.word_freq[self.indexer.get_object(k)]                            
+            )
+        return counter
 
 class SentimentClassifier(object):
     """
@@ -215,7 +258,6 @@ def train_logistic_regression(train_exs: List[SentimentExample], feat_extractor:
     :param feat_extractor: feature extractor to use
     :return: trained LogisticRegressionClassifier model
     """
-
     epochs = 35
     lr = 0.015
     keys = []
@@ -227,7 +269,7 @@ def train_logistic_regression(train_exs: List[SentimentExample], feat_extractor:
 
     model = LogisticRegressionClassifier(list(set(keys)), feat_extractor)
 
-    for epoch in range(1, epochs+1):
+    for epoch in tqdm(range(1, epochs+1)):
         if epoch % 12 == 0:
             lr /= 10
         random.shuffle(train_exs)
@@ -261,6 +303,9 @@ def train_model(args, train_exs: List[SentimentExample], dev_exs: List[Sentiment
     elif args.feats == "BETTER":
         # Add additional preprocessing code here
         feat_extractor = BetterFeatureExtractor(Indexer())
+        print("settting")
+        feat_extractor.set_word_freq(train_exs)
+        print("finish")
     else:
         raise Exception("Pass in UNIGRAM, BIGRAM, or BETTER to run the appropriate system")
 
