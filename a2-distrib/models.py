@@ -48,8 +48,28 @@ class NeuralSentimentClassifier(SentimentClassifier):
     """
     def __init__(self):
         raise NotImplementedError
+    def predict(self, ex_words: List[str]) -> int:
+
+    def predict_all(self, all_ex_words: List[List[str]]) -> List[int]:
 
 
+def file2embed(sentiment_example, max_len=52, word_vec_len=50):
+#     file = 'data/train.txt'
+#     max_len = 52
+    total_sen = len(sentiment_example)
+    res = np.zeros(shape=(total_sen, max_len*50))
+    labels = []
+    for i in range(total_sen):
+        word_ems = []
+        for j in range(max_len):
+            if j >= len(sentiment_example[i].words):
+                word_ems.extend(word_embed.get_embedding("PAD"))
+            else:
+                word_ems.extend(word_embed.get_embedding(sentiment_example[i].words[j]))
+        res[i, :] = np.array(word_ems)
+        labels.append(sentiment_example[i].label)
+    return res, np.array(labels)
+    
 def train_deep_averaging_network(args, train_exs: List[SentimentExample], dev_exs: List[SentimentExample], word_embeddings: WordEmbeddings) -> NeuralSentimentClassifier:
     """
     :param args: Command-line args so you can access them here
@@ -58,5 +78,10 @@ def train_deep_averaging_network(args, train_exs: List[SentimentExample], dev_ex
     :param word_embeddings: set of loaded word embeddings
     :return: A trained NeuralSentimentClassifier model
     """
+    train_x, train_y = 
+
+
+
+
     raise NotImplementedError
 
