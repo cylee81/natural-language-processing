@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 
 ### 
 # IMPLEMENT ME! REPLACE WITH YOUR ANSWER TO PART 1B
-OPTIMAL_STEP_SIZE = 0.01
+OPTIMAL_STEP_SIZE = 0.1
 ###
 
 def _parse_args():
