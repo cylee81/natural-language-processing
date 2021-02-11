@@ -140,30 +140,11 @@ def train_deep_averaging_network(args, train_exs: List[SentimentExample], dev_ex
             output_argmax = torch.argmax(outputs, axis=1)
             # running_acc += sum(output_argmax.numpy() == train_y_batch.numpy()) / len(output_argmax)
             optimizer.step()
-        #     running_loss += loss.item()
+            running_loss += loss.item()
         epoch_loss = running_loss/n_iter
         # epoch_acc = running_acc/n_iter
-        # print(f"loss: {epoch_loss}")
+        print(f"loss: {epoch_loss}")
         # print(f"acc: {epoch_acc}")
         scheduler.step(epoch_loss)
 
     return NeuralSentimentClassifier(model, word_embeddings)
-
-
-# def file2embed_pad(sentiment_example, word_embed, max_len=52, word_vec_len=50):
-#     total_sen = len(sentiment_example)
-#     res = np.zeros(shape=(total_sen, max_len*50))
-#     labels = []
-#     for i in range(total_sen):
-#         word_ems = []
-#         for j in range(max_len):
-#             if j >= len(sentiment_example[i].words):
-#                 word_ems.append(word_embed.get_embedding("PAD"))
-#             else:
-#                 word_ems.append(word_embed.get_embedding(sentiment_example[i].words[j]))
-#         res[i, :] = np.array(word_ems)
-#         # label = np.zeros(2)
-#         # label[sentiment_example[i].label] = 1
-#         label = sentiment_example[i].label
-#         labels.append(label)
-#     return np.array(res), np.array(labels)
