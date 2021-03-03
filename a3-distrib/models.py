@@ -69,7 +69,43 @@ class HmmNerModel(object):
         :param sentence_tokens: List of the tokens in the sentence to tag
         :return: The LabeledSentence consisting of predictions over the sentence
         """
-        raise Exception("IMPLEMENT ME")
+        scorer = ProbabilisticSequenceScorer(self.tag_indexer, self.word_indexer, self.init_log_probs, self.transition_log_probs, self.emission_log_probs)
+        tag_len = len(self.tag_indexer)
+        delta = np.ones((len(sentence_tokens),tag_len))*-10000000
+        psi = np.ones((len(sentence_tokens),tag_len))*-10000000
+        p_max = -10000000
+        path = np.zeros(len(sentence_tokens))
+        total_len = len(sentence_tokens)
+        result = []
+
+        for x in range(tag_len):
+            delta[0][x] = scorer.score_init(sentence_tokens, x) + scorer.score_emission(sentence_tokens, x, 0)
+            psi[0][x] = 0
+
+        for t in range(1,total_len):
+            for to_tag_i in range(tag_len):
+                for from_tag_i in range(tag_len):
+                    prev = delta[t-1][from_tag_i]
+                    trans = scorer.score_transition(sentence_tokens, from_tag_i, to_tag_i)
+                    emi = scorer.score_emission(sentence_tokens, to_tag_i, t)
+                    total = prev+trans+emi
+                    if delta[t][to_tag_i] < total:
+                        delta[t][to_tag_i] = total
+                        psi[t][to_tag_i] = from_tag_i
+        
+        for i in range(tag_len):
+            curr = delta[total_len-1][i]
+            if (p_max < curr):
+                p_max = curr
+                path[total_len-1] = i
+
+        for i in range(1, total_len):
+            path[int(total_len-i-1)] = psi[int(total_len-i)][int(path[total_len-i])]
+        
+        for i in range(len(path)):
+            result.append(self.tag_indexer.get_object(path[i]))
+ 
+        return LabeledSentence(sentence_tokens, chunks_from_bio_tag_seq(result))
 
 
 def train_hmm_model(sentences: List[LabeledSentence], silent: bool=False) -> HmmNerModel:
