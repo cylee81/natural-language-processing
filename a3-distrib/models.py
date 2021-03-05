@@ -72,7 +72,7 @@ class HmmNerModel(object):
         scorer = ProbabilisticSequenceScorer(self.tag_indexer, self.word_indexer, self.init_log_probs, self.transition_log_probs, self.emission_log_probs)
         tag_len = len(self.tag_indexer)
         delta = np.ones((len(sentence_tokens),tag_len))*-10000000
-        psi = np.ones((len(sentence_tokens),tag_len))*-10000000
+        tracker = np.ones((len(sentence_tokens),tag_len))*-10000000
         p_max = -10000000
         path = np.zeros(len(sentence_tokens))
         total_len = len(sentence_tokens)
@@ -80,18 +80,18 @@ class HmmNerModel(object):
 
         for x in range(tag_len):
             delta[0][x] = scorer.score_init(sentence_tokens, x) + scorer.score_emission(sentence_tokens, x, 0)
-            psi[0][x] = 0
+            tracker[0][x] = 0
 
         for t in range(1,total_len):
-            for to_tag_i in range(tag_len):
-                for from_tag_i in range(tag_len):
+            for from_tag_i in range(tag_len):
+                for to_tag_i in range(tag_len):
                     prev = delta[t-1][from_tag_i]
                     trans = scorer.score_transition(sentence_tokens, from_tag_i, to_tag_i)
                     emi = scorer.score_emission(sentence_tokens, to_tag_i, t)
                     total = prev+trans+emi
                     if delta[t][to_tag_i] < total:
                         delta[t][to_tag_i] = total
-                        psi[t][to_tag_i] = from_tag_i
+                        tracker[t][to_tag_i] = from_tag_i
         
         for i in range(tag_len):
             curr = delta[total_len-1][i]
@@ -100,7 +100,7 @@ class HmmNerModel(object):
                 path[total_len-1] = i
 
         for i in range(1, total_len):
-            path[int(total_len-i-1)] = psi[int(total_len-i)][int(path[total_len-i])]
+            path[int(total_len-i-1)] = tracker[int(total_len-i)][int(path[total_len-i])]
         
         for i in range(len(path)):
             result.append(self.tag_indexer.get_object(path[i]))
@@ -239,75 +239,34 @@ class CrfNerModel(object):
                     add_to_indexer=False
                 )
         n_tokens = len(sentence_tokens)
-        v = np.zeros((n_tokens, self.n_tags))
-        backpointer = np.zeros((n_tokens, self.n_tags), int)
+        delta = np.zeros((n_tokens, self.n_tags))
+        tracker = np.zeros((n_tokens, self.n_tags), int)
         Scorer = FeatureBasedSequenceScorer(self.tag_indexer, self.feature_weights, feature_cache)
 
-        for t in range(n_tokens):
-            for y in range(self.n_tags):
-                emission_score = Scorer.score_emission(sentence_tokens, tag_idx=y, word_posn=t)
-                if t == 0:
-                    transition_score = Scorer.score_init(sentence_tokens, tag_idx=y)
+        for token in range(n_tokens):
+            for tag in range(self.n_tags):
+                emission_score = Scorer.score_emission(sentence_tokens, tag, token)
+                if token == 0:
+                    transition_score = Scorer.score_init(sentence_tokens, tag)
                 else:
-                    transition_score_candidates = np.array([
-                        Scorer.score_transition(sentence_tokens, prev_tag_idx=y_prev, curr_tag_idx=y)
-                        for y_prev in range(self.n_tags)
-                    ]) + v[t-1, :]
-                    backpointer[t][y] = np.argmax(transition_score_candidates)
+                    transition_score_candidates = []
+                    for tag_prev in range(self.n_tags):
+                        score = Scorer.score_transition(sentence_tokens, tag_prev, tag)
+                        transition_score_candidates.append(score+delta[token-1, tag_prev])
+                    transition_score_candidates = np.array(transition_score_candidates)
+                    tracker[token][tag] = np.argmax(transition_score_candidates)
                     transition_score = np.max(transition_score_candidates)
-                v[t][y] = emission_score + transition_score
+                delta[token][tag] = emission_score + transition_score
 
         bio_tags = []
-        best_idx = np.argmax(v[-1][:])
+        best_idx = np.argmax(delta[-1][:])
     
         for i in range(n_tokens-1, -1, -1):
             bio_tags.append(self.tag_indexer.ints_to_objs[best_idx])
-            best_idx = backpointer[i][best_idx]
+            best_idx = tracker[i][best_idx]
         
-        words = [token.word for token in sentence_tokens]
         chunks = chunks_from_bio_tag_seq(bio_tags[::-1])
         return LabeledSentence(sentence_tokens, chunks)
-        # prev_tag_max = np.empty((len(sentence_tokens) , len(self.tag_indexer))) # pointer for argmax previous tag
-
-        # feature_cache = [[[] for k in range(0, len(self.tag_indexer))] for j in range(0, len(sentence_tokens))]
-        # for word_idx in range(0, len(sentence_tokens)):
-        #     for tag_idx in range(0, len(self.tag_indexer)):
-        #         feature_cache[word_idx][tag_idx] = extract_emission_features(
-        #             sentence_tokens, 
-        #             word_idx, 
-        #             self.tag_indexer.get_object(tag_idx), 
-        #             self.feature_indexer, 
-        #             add_to_indexer=False
-        #         )
-        # Scorer = FeatureBasedSequenceScorer(self.tag_indexer, self.feature_weights, feature_cache)
-        # score = np.zeros([len(sentence_tokens),len(self.tag_indexer)]) 
-        
-        # for s in range(0,len(self.tag_indexer)):
-        #     # emission_feat = extract_emission_features(sentence_tokens,0, self.tag_indexer.get_object(s), self.feature_indexer, add_to_indexer=False)
-        #     score[0][s] = Scorer.score_emission(sentence_tokens, s, 0)
-        # #2. for y_i with viterbi kind of - also extending to forward backward
-        # for i in range(1,len(sentence_tokens)):
-        #     for s in range(0,len(self.tag_indexer)):
-        #         emission_feat = Scorer.score_emission(sentence_tokens, s, i)
-        #         temp_score = 1*np.zeros(len(self.tag_indexer))
-        #         for prev_tag in range(0,len(self.tag_indexer)):
-        #             temp_score[prev_tag] = score[i-1][prev_tag] + emission_feat + Scorer.score_transition(sentence_tokens, prev_tag, s)
-                  
-        #         score[i][s]= np.max(temp_score)
-        #         prev_tag_max[i][s] = np.argmax(temp_score) 
-
-        # pred_tag = []
-        # pred_tag_ind = np.empty(len(sentence_tokens),dtype=int)
-
-        # pred_tag_ind[len(sentence_tokens)-1] = np.argmax(score[len(sentence_tokens)-1])
-        # for i in range(1,len(sentence_tokens)):
-        #     pred_tag_ind[len(sentence_tokens)-i-1] = prev_tag_max[len(sentence_tokens)-i][pred_tag_ind[len(sentence_tokens)-i]]
-        
-        # for i in range(0,len(sentence_tokens)):
-        #     pred_tag.append(self.tag_indexer.get_object(pred_tag_ind[i]))
-    
-        # return LabeledSentence(sentence_tokens, chunks_from_bio_tag_seq(pred_tag))
-            
 
     def decode_beam(self, sentence_tokens: List[Token]) -> LabeledSentence:
         """
@@ -326,43 +285,38 @@ class CrfNerModel(object):
                     add_to_indexer=False
                 )
         Scorer = FeatureBasedSequenceScorer(self.tag_indexer, self.feature_weights, feature_cache)
-        tag_len = len(self.tag_indexer)
-        delta = np.ones((len(sentence_tokens),tag_len))*-10000000
-        psi = np.ones((len(sentence_tokens),tag_len))*-10000000
-        p_max = -10000000
-        path = np.zeros(len(sentence_tokens))
-        total_len = len(sentence_tokens)
-        result = []
-
-        for x in range(tag_len):
-            delta[0][x] = Scorer.score_init(sentence_tokens, x) + Scorer.score_emission(sentence_tokens, x, 0)
-            psi[0][x] = 0
-
-        for t in range(1,total_len):
-            for to_tag_i in range(tag_len):
-                for from_tag_i in range(tag_len):
-                    prev = delta[t-1][from_tag_i]
-                    trans = Scorer.score_transition(sentence_tokens, from_tag_i, to_tag_i)
-                    emi = Scorer.score_emission(sentence_tokens, to_tag_i, t)
-                    total = prev+trans+emi
-                    if delta[t][to_tag_i] < total:
-                        delta[t][to_tag_i] = total
-                        psi[t][to_tag_i] = from_tag_i
+        n_tokens = len(sentence_tokens)
+        beam_size = 2
+        beam_list = []
+        tracker = np.zeros((n_tokens, self.n_tags), int)
+        for token in range(n_tokens):
+            beam_t = Beam(beam_size)
+            for tag in range(self.n_tags):
+                emission_score = Scorer.score_emission(sentence_tokens, tag, token)
+                prevs = []
+                scores = []
+                if token == 0:
+                    transition_score = Scorer.score_init(sentence_tokens, token)
+                else:
+                    for prev, score in beam_list[token-1].get_elts_and_scores():
+                        prevs.append(prev)
+                        scores.append(Scorer.score_transition(sentence_tokens, prev, tag)+score)
+                    idx = scores.index(max(scores))
+                    y_prev = prevs[idx]
+                    tracker[token][tag] = y_prev
+                    transition_score = scores[idx]
+                beam_t.add(tag, emission_score + transition_score)
+            beam_list.append(beam_t)
         
-        for i in range(tag_len):
-            curr = delta[total_len-1][i]
-            if (p_max < curr):
-                p_max = curr
-                path[total_len-1] = i
-
-        for i in range(1, total_len):
-            path[int(total_len-i-1)] = psi[int(total_len-i)][int(path[total_len-i])]
+        bio_tags = []
+        best_idx = beam_list[-1].head()
         
-        for i in range(len(path)):
-            result.append(self.tag_indexer.get_object(path[i]))
- 
-        return LabeledSentence(sentence_tokens, chunks_from_bio_tag_seq(result))
-
+        for i in range(n_tokens-1, -1, -1):
+            bio_tags.append(self.tag_indexer.ints_to_objs[best_idx])
+            best_idx = tracker[i][best_idx]
+        
+        chunks = chunks_from_bio_tag_seq(bio_tags[::-1])
+        return LabeledSentence(sentence_tokens, chunks)
 
 def train_crf_model(sentences: List[LabeledSentence], silent: bool=False) -> CrfNerModel:
     """
@@ -372,7 +326,6 @@ def train_crf_model(sentences: List[LabeledSentence], silent: bool=False) -> Crf
     :return: The CrfNerModel, which is primarily a wrapper around the tag + feature indexers as well as weights
     """
     tag_indexer = Indexer()
-    sentences = sentences[:2] + sentences[:2]
     for sentence in sentences:
         for tag in sentence.get_bio_tags():
             tag_indexer.add_and_get_index(tag)
@@ -483,21 +436,18 @@ def compute_gradient(sentence: LabeledSentence, tag_indexer: Indexer, scorer: Fe
     """
     n_tokens = len(sentence)
     n_tags = len(tag_indexer)
-    # token_idx = [feature_indexer.index_of(tok.word) for tok in sentence.tokens]
-    # gold_tags = sentence.get_bio_tags()
+
     gold_tags = [tag_indexer.index_of(tag) for tag in bio_tags_from_chunks(sentence.chunks, n_tokens)]
     
-    # Extract features on each emission and transition
     forward_log_probs = np.zeros((n_tokens, n_tags))
     backward_log_probs = np.zeros((n_tokens, n_tags))
 
-    # Calculate emission beforehand
     emission_matrix = np.zeros((n_tokens, n_tags))
     transition_matrix = np.zeros((n_tags, n_tags))
 
     for tag_idx in range(n_tags): 
-        forward_log_probs[0][tag_idx] = scorer.score_emission(sentence.tokens, tag_idx, 0) # Emission log probability
-        backward_log_probs[len(sentence.tokens) - 1][tag_idx] = 0 # log(1) = 0
+        forward_log_probs[0][tag_idx] = scorer.score_emission(sentence.tokens, tag_idx, 0)
+        backward_log_probs[len(sentence.tokens) - 1][tag_idx] = 0
 
     for token in range(1, n_tokens):
         for tag in range(n_tags):
@@ -506,7 +456,6 @@ def compute_gradient(sentence: LabeledSentence, tag_indexer: Indexer, scorer: Fe
             for tag_prev in range(n_tags):
                 tran = scorer.score_transition(sentence.tokens, tag_prev, tag)
                 cur_term = emission + tran + forward_log_probs[token-1, tag_prev]
-                # forward_log_probs[token, tag] = np.logaddexp(forward_log_probs[token, tag], cur_term) 
                 if tag_prev == 0:
                     forward_log_probs[token, tag] = cur_term 
                 else:
@@ -518,7 +467,6 @@ def compute_gradient(sentence: LabeledSentence, tag_indexer: Indexer, scorer: Fe
                 emission = emission_matrix[token+1, next_tag]
                 transition= transition_matrix[tag, next_tag]
                 cur_term = emission + transition + backward_log_probs[token + 1, next_tag]
-                # backward_log_probs[token, tag] = np.logaddexp(backward_log_probs[token, tag], cur_term)
                 if next_tag == 0:
                     backward_log_probs[token, tag] = cur_term 
                 else:
@@ -537,19 +485,17 @@ def compute_gradient(sentence: LabeledSentence, tag_indexer: Indexer, scorer: Fe
             cur_term = forward_log_probs[word_idx, tag_idx] + backward_log_probs[word_idx, tag_idx]
             marginal_probs[word_idx, tag_idx] = cur_term - normalizer[word_idx]
 
-    gold = None
+    grad = None
     for t in range(n_tokens):
-        if not gold:
-            gold = Counter(scorer.feat_cache[t][gold_tags[t]])
+        if not grad:
+            grad = Counter(scorer.feat_cache[t][gold_tags[t]])
         else:
-            gold.update(scorer.feat_cache[t][gold_tags[t]])
+            grad.update(scorer.feat_cache[t][gold_tags[t]])
 
         for y in range(n_tags):
             for feat in scorer.feat_cache[t][y]:
-                gold[feat] -= np.exp(marginal_probs[t, y])
-                
-    grad = gold 
-    
+                grad[feat] -= np.exp(marginal_probs[t, y])
+                    
     gold_emissions = np.sum([
         emission_matrix[t, y]
         for t, y in enumerate(gold_tags)
