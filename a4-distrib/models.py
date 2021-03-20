@@ -26,17 +26,40 @@ class FrequencyBasedClassifier(ConsonantVowelClassifier):
         self.vowel_counts = vowel_counts
 
     def predict(self, context):
+        print(f"this is context: {context}")
         # Look two back to find the letter before the space
         if self.consonant_counts[context[-1]] > self.vowel_counts[context[-1]]:
             return 0
         else:
             return 1
 
+class LSTM(nn.Module):
+
+    def __init__(self, dimension=128):
+        super(LSTM, self).__init__()
+
+        self.embedding = nn.Embedding(26, 300)
+        self.lstm = nn.LSTM(input_size=300,
+                            hidden_size=dimension,
+                            num_layers=1,
+                            batch_first=True,
+                            )
+        self.fc = nn.Linear(dimension, 2)
+
+    def forward(self, text):
+        embeds = self.embedding(text)
+        lstm_out, _ = self.lstm(embeds.view(len(text), 1, -1))
+        out_space = self.hidden2tag(lstm_out.view(len(text), -1))
+        out_scores = F.log_softmax(out_space, dim=1)
+        return out_scores
 
 class RNNClassifier(ConsonantVowelClassifier):
+    def __init__(self, network):
+        self.model = network
+        self.model.train(False)
     def predict(self, context):
-        raise Exception("Implement me")
-
+        out = self.model.forward(context)
+        return out
 
 def train_frequency_based_classifier(cons_exs, vowel_exs):
     consonant_counts = collections.Counter()
