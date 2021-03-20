@@ -2,7 +2,13 @@
 
 import numpy as np
 import collections
-
+import torch
+import torch.nn as nn
+from torch import optim
+import random
+from torch.utils.data import Dataset, DataLoader
+import torch.nn.functional as F
+from torch import optim
 #####################
 # MODELS FOR PART 1 #
 #####################
@@ -26,7 +32,6 @@ class FrequencyBasedClassifier(ConsonantVowelClassifier):
         self.vowel_counts = vowel_counts
 
     def predict(self, context):
-        print(f"this is context: {context}")
         # Look two back to find the letter before the space
         if self.consonant_counts[context[-1]] > self.vowel_counts[context[-1]]:
             return 0
@@ -35,30 +40,49 @@ class FrequencyBasedClassifier(ConsonantVowelClassifier):
 
 class LSTM(nn.Module):
 
-    def __init__(self, dimension=128):
+    def __init__(self, num_hidden=5, num_layers=2):
         super(LSTM, self).__init__()
 
-        self.embedding = nn.Embedding(26, 300)
-        self.lstm = nn.LSTM(input_size=300,
-                            hidden_size=dimension,
-                            num_layers=1,
-                            batch_first=True,
-                            )
-        self.fc = nn.Linear(dimension, 2)
+        self.embedding = nn.Embedding(27, 15)
+        self.embedding.weight.requires_grad_(True)
+        self.num_layers = num_layers
+        self.num_hidden = num_hidden
+        self.lstm = nn.LSTM(
+            input_size=15,
+            hidden_size=num_hidden,
+            num_layers=self.num_layers,
+            batch_first=True,
+            )
+        self.fc = nn.Linear(num_hidden, 2)
+        self.log_softmax = nn.LogSoftmax(dim=2)
+
+    def init_weight(self):
+        nn.init.xavier_uniform_(self.lstm.weight_hh_l0, gain=1)
+        nn.init.xavier_uniform_(self.lstm.weight_ih_l0, gain=1)
+        nn.init.constant_(self.lstm.bias_hh_l0, 0)
+        nn.init.constant_(self.lstm.bias_ih_l0, 0)
 
     def forward(self, text):
         embeds = self.embedding(text)
-        lstm_out, _ = self.lstm(embeds.view(len(text), 1, -1))
-        out_space = self.hidden2tag(lstm_out.view(len(text), -1))
-        out_scores = F.log_softmax(out_space, dim=1)
+        h0 = torch.zeros(self.num_layers, embeds.size(0), self.num_hidden)
+        c0 = torch.zeros(self.num_layers, embeds.size(0), self.num_hidden)
+        lstm_out, _ = self.lstm(embeds, (h0, c0))
+        out_space = self.fc(lstm_out)
+        out_scores = self.log_softmax(out_space)
         return out_scores
 
 class RNNClassifier(ConsonantVowelClassifier):
-    def __init__(self, network):
+    def __init__(self, network, indexer):
         self.model = network
+        self.indexer = indexer
         self.model.train(False)
     def predict(self, context):
-        out = self.model.forward(context)
+        index = [self.indexer.index_of(i) for i in context]
+        index = np.array(index)
+        index = torch.from_numpy(index).long()
+        index = torch.unsqueeze(index, 0)
+        out = self.model.forward(index)
+        out = torch.argmax(out[0][-1])
         return out
 
 def train_frequency_based_classifier(cons_exs, vowel_exs):
@@ -78,11 +102,56 @@ def train_rnn_classifier(args, train_cons_exs, train_vowel_exs, dev_cons_exs, de
     :param train_vowel_exs: list of strings followed by vowels
     :param dev_cons_exs: list of strings followed by consonants
     :param dev_vowel_exs: list of strings followed by vowels
-    :param vocab_index: an Indexer of the character vocabulary (27 characters)
+    :param vocab_index: an Indexer of the character vocabu lary (27 characters)
     :return: an RNNClassifier instance trained on the given data
     """
-    raise Exception("Implement me")
+    raw_train_x = train_cons_exs+train_vowel_exs
+    train_y = [0]*len(train_cons_exs) + [1]*len(train_vowel_exs)
 
+    train_x = []
+    for data in raw_train_x:
+        index = [vocab_index.index_of(i) for i in data]
+        train_x.append(index)
+
+    train_x = np.array(train_x)
+    train_y = np.array(train_y)
+
+    print(f"shape of train_x: {train_x.shape}")
+    print(np.max(train_x))
+
+    model = LSTM()
+    epochs = 30
+    batch_size = 64
+    lr = 0.01
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+    model.train(True)
+    loss_func = nn.NLLLoss()
+    for epoch in range(epochs):
+        # train phase
+        n_iter = len(train_x) // batch_size
+        running_loss = 0.0
+        idx = np.linspace(0, len(train_x)-1, len(train_x), dtype=int)
+        random.shuffle(idx)
+        train_x = train_x[idx, ...]
+        train_y = train_y[idx]
+        for i in range(n_iter):
+            train_x_batch = train_x[i*batch_size:i*batch_size+batch_size, :]
+            train_y_batch = train_y[i*batch_size:i*batch_size+batch_size]
+            train_x_batch = torch.from_numpy(train_x_batch).float()
+            train_y_batch = torch.from_numpy(train_y_batch)
+            optimizer.zero_grad()
+            outputs = model(train_x_batch.long())
+            outputs = outputs[:, -1,:]
+            outputs = torch.squeeze(outputs, 1)
+            loss = loss_func(outputs, train_y_batch)
+            loss.backward()
+            optimizer.step()
+            running_loss += loss.item()
+        epoch_loss = running_loss/n_iter
+        # epoch_acc = running_acc/n_iter
+        print(f"loss: {epoch_loss}")
+        # print(f"acc: {epoch_acc}")
+    return RNNClassifier(model, vocab_index)
 
 #####################
 # MODELS FOR PART 2 #
