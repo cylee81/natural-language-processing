@@ -116,9 +116,6 @@ def train_rnn_classifier(args, train_cons_exs, train_vowel_exs, dev_cons_exs, de
     train_x = np.array(train_x)
     train_y = np.array(train_y)
 
-    print(f"shape of train_x: {train_x.shape}")
-    print(np.max(train_x))
-
     model = LSTM()
     epochs = 30
     batch_size = 64
@@ -231,7 +228,7 @@ def train_lm(args, train_text, dev_text, vocab_index):
     :return: an RNNLanguageModel instance trained on the given data
     """
     model = LSTM(output_size=27, num_hidden=25, num_layers=1)
-    epochs = 25
+    epochs = 30
     batch_size = 32
     lr = 0.01
     chunk_size = 20
