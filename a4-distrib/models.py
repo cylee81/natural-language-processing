@@ -40,7 +40,7 @@ class FrequencyBasedClassifier(ConsonantVowelClassifier):
 
 class LSTM(nn.Module):
 
-    def __init__(self, num_hidden=5, num_layers=2):
+    def __init__(self, num_hidden=5, num_layers=2, output_size=2):
         super(LSTM, self).__init__()
 
         self.embedding = nn.Embedding(27, 15)
@@ -53,7 +53,7 @@ class LSTM(nn.Module):
             num_layers=self.num_layers,
             batch_first=True,
             )
-        self.fc = nn.Linear(num_hidden, 2)
+        self.fc = nn.Linear(num_hidden, output_size)
         self.log_softmax = nn.LogSoftmax(dim=2)
 
     def init_weight(self):
@@ -194,15 +194,33 @@ class UniformLanguageModel(LanguageModel):
 
 
 class RNNLanguageModel(LanguageModel):
-    def __init__(self):
-        raise Exception("Implement me")
+    def __init__(self, rnn, indexer):
+        self.rnn = rnn
+        self.indexer = indexer
+        self.rnn.train(False)
 
     def get_next_char_log_probs(self, context):
-        raise Exception("Implement me")
+        idxs = [self.indexer.index_of(k) for k in context]
+        idxs = torch.tensor(idxs, dtype=torch.long)
+        probs = self.rnn(idxs.unsqueeze(0))
+        probs = probs.squeeze(0)
+        relevant_probs = probs[len(context)-1]
+        return relevant_probs.detach().numpy()
 
     def get_log_prob_sequence(self, next_chars, context):
-        raise Exception("Implement me")
-
+        log_prob = 0.0
+        m = len(next_chars)
+        context = list(context + next_chars[0:m-1])
+        n = len(context)
+        idxs = [self.indexer.index_of(k) for k in context]
+        idxs = torch.tensor(idxs, dtype=torch.long)
+        probs = self.rnn(idxs.unsqueeze(0))
+        probs = probs.squeeze(0)
+        i = n - m
+        for char in next_chars:
+            log_prob += probs[i][self.indexer.index_of(char)]
+            i += 1
+        return log_prob.item()
 
 def train_lm(args, train_text, dev_text, vocab_index):
     """
@@ -212,4 +230,45 @@ def train_lm(args, train_text, dev_text, vocab_index):
     :param vocab_index: an Indexer of the character vocabulary (27 characters)
     :return: an RNNLanguageModel instance trained on the given data
     """
-    raise Exception("Implement me")
+    model = LSTM(output_size=27, num_hidden=25, num_layers=1)
+    epochs = 25
+    batch_size = 32
+    lr = 0.01
+    chunk_size = 20
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+    model.train(True)
+    loss_func = nn.NLLLoss()
+
+    for epoch in range(epochs):
+    # train phase
+        running_loss = 0.0
+        for i in range(0, len(train_text), chunk_size*batch_size):
+            train_x_batch = []
+            train_y_batch = []
+            for j in range(i, i+chunk_size*batch_size, chunk_size):
+                if j+chunk_size < len(train_text)-1:
+                    text_batch = train_text[j: j+chunk_size-1]
+                    label_batch = train_text[j+1: j+chunk_size]
+                    x_batch = [vocab_index.index_of(k) for k in text_batch]
+                    y_batch = [vocab_index.index_of(k) for k in label_batch]
+                    train_x_batch.append(x_batch)
+                    train_y_batch.append(y_batch)
+                # else:
+                    # rem = len(train_text) - j
+                    # label = train_text[-1]
+                    # sub_idx = [vocab_index.index_of(k) for k in train_text[j: j+rem-1]]
+                    # x_batch = [vocab_index.index_of(" ")*(chunk_size-rem)] + sub_idx
+                    # y_batch = vocab_index.index_of(label)
+                    # train_x_batch.append(x_batch)
+                    # train_y_batch.append(y_batch)
+            # train_y = torch.tensor(train_y_batch)
+            optimizer.zero_grad()
+            outputs = model(torch.tensor(train_x_batch).long())
+            outputs = torch.transpose(outputs, 1, 2)
+            loss = loss_func(outputs, torch.tensor(train_y_batch))
+            loss.backward()
+            optimizer.step()
+            running_loss += loss.item()
+        epoch_loss = running_loss/(i+1)
+        print(f"loss: {epoch_loss}")
+    return RNNLanguageModel(model, vocab_index)
