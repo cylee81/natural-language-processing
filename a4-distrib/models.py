@@ -204,8 +204,8 @@ class RNNLanguageModel(LanguageModel):
         idxs = torch.tensor(idxs, dtype=torch.long)
         probs = self.rnn(idxs.unsqueeze(0))
         probs = probs.squeeze(0)
-        relevant_probs = probs[len(context)-1]
-        return relevant_probs.detach().numpy()
+        probs = probs[len(context)-1]
+        return probs.detach().numpy()
 
     def get_log_prob_sequence(self, next_chars, context):
         log_prob = 0.0
@@ -253,15 +253,6 @@ def train_lm(args, train_text, dev_text, vocab_index):
                     y_batch = [vocab_index.index_of(k) for k in label_batch]
                     train_x_batch.append(x_batch)
                     train_y_batch.append(y_batch)
-                # else:
-                    # rem = len(train_text) - j
-                    # label = train_text[-1]
-                    # sub_idx = [vocab_index.index_of(k) for k in train_text[j: j+rem-1]]
-                    # x_batch = [vocab_index.index_of(" ")*(chunk_size-rem)] + sub_idx
-                    # y_batch = vocab_index.index_of(label)
-                    # train_x_batch.append(x_batch)
-                    # train_y_batch.append(y_batch)
-            # train_y = torch.tensor(train_y_batch)
             optimizer.zero_grad()
             outputs = model(torch.tensor(train_x_batch).long())
             outputs = torch.transpose(outputs, 1, 2)
