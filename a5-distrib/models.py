@@ -79,6 +79,7 @@ class Seq2SeqSemanticParser(nn.Module):
         self.output_emb = EmbeddingLayer(emb_dim, len(output_indexer), embedding_dropout)
         self.decoder = RNNDecoder(emb_dim, hidden_size, len(output_indexer))
         # raise Exception("implement me!")
+        self.loss_fn = torch.nn.CrossEntropyLoss()
 
     def forward(self, x_tensor, inp_lens_tensor, y_tensor, out_lens_tensor):
         """
@@ -88,10 +89,43 @@ class Seq2SeqSemanticParser(nn.Module):
         lengths aren't needed if you don't batchify the training.
         :return: loss of the batch
         """
-        raise Exception("implement me!")
+        loss_batch = 0
+        embedded_input = self.input_emb(x_tensor)
+        encoder_out, (h,c) = self.encoder(embedded_input, inp_lens_tensor)
+        for i in range(encoder_out.shape[1]):
+            start = self.output_emb(torch.LongTensor([[self.output_indexer.index_of(SOS_SYMBOL)]]))
+            (h1,c1) = (h[i].unsqueeze(0).unsqueeze(0), c[i].unsqueeze(0).unsqueeze(0))
+            for j in range(out_lens_tensor[i]):
+                cell_out, _,(h1,c1) = self.decoder(start,h1,c1,1,encoder_out[:x_tensor[i],i,:])
+                # ind = torch.argmax(cell_out)
+                ind = y_tensor[i][j]
+                start = decoder_embedding(ind.unsqueeze(0).unsqueeze(0))
+            loss_batch += loss_fn(cell_out, y_tensor[i][j].unsqueeze(0).detach())
+
+        return loss_batch
+        # raise Exception("implement me!")
 
     def decode(self, test_data: List[Example]) -> List[List[Derivation]]:
-        raise Exception("implement me!")
+        ans =  []
+        for ex in test_data:
+            tmp  = []
+            embedded = self.input_emb(torch.LongTensor(ex.x_indexed).unsqueeze(0))
+            x = torch.LongTensor([len(ex.x_indexed)])
+            enc_out,(h,c) = self.encoder(embedded, x)
+            start = output_indexer.index_of(SOS_SYMBOL)
+            p = 0
+            h = h.unsqueeze(0)
+            c = c.unsqueeze(0)
+            while True:
+                emb = self.output_emb(torch.LongTensor([[start]]))
+                cell_out, _, (h,c) = self.decoder(emb,h,c,torch.LongTensor([1]),enc_out[:len(ex.x_indexed),:])
+                start = torch.argmax(cell_out)
+                p += torch.max(F.log_softmax(cell_out,dim=1))
+                if start.item() == output_indexer.index_of(EOS_SYMBOL):
+                    break
+                tmp.append(start.item())
+            ans.append([Derivation(ex,np.exp(p.detach()), list(map(lambda x: self.out_ind.get_object(x),tmp)))])
+        return ans
 
     def encode_input(self, x_tensor, inp_lens_tensor):
         """
