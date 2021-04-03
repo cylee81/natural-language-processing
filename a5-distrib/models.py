@@ -72,10 +72,13 @@ class Seq2SeqSemanticParser(nn.Module):
         super(Seq2SeqSemanticParser, self).__init__()
         self.input_indexer = input_indexer
         self.output_indexer = output_indexer
-        
+
         self.input_emb = EmbeddingLayer(emb_dim, len(input_indexer), embedding_dropout)
         self.encoder = RNNEncoder(emb_dim, hidden_size, bidirect)
-        raise Exception("implement me!")
+
+        self.output_emb = EmbeddingLayer(emb_dim, len(output_indexer), embedding_dropout)
+        self.decoder = RNNDecoder(emb_dim, hidden_size, len(output_indexer))
+        # raise Exception("implement me!")
 
     def forward(self, x_tensor, inp_lens_tensor, y_tensor, out_lens_tensor):
         """
@@ -290,5 +293,69 @@ def train_model_encdec(train_data: List[Example], dev_data: List[Example], input
     # First create a model. Then loop over epochs, loop over examples, and given some indexed words
     # call your seq-to-seq model, accumulate losses, update parameters
 
+    BATCH_SIZE=4
 
-    raise Exception("Implement the rest of me to train your encoder-decoder model")
+    input_len = np.asarray([len(ex.x_indexed) for ex in train_data])
+    input_len = torch.LongTensor(input_len)
+    all_train_input_data = torch.LongTensor(all_train_input_data)
+
+    output_len = np.asarray([len(ex.y_indexed) for ex in train_data])
+    output_len = torch.LongTensor(output_len)
+    all_train_output_data = torch.LongTensor(all_train_output_data)
+    all_train_output_inp_data = torch.LongTensor(all_train_output_inp_data)
+
+    input_len.requires_grad_(False)
+    all_train_input_data.requires_grad_(False)
+    output_len.requires_grad_(False)
+    all_train_output_data.requires_grad_(False)
+    all_train_output_inp_data.requires_grad_(False)
+    dataset = torch.utils.data.TensorDataset(input_len, all_train_input_data, output_len, all_train_output_data, all_train_output_inp_data)
+    dataset_loader = torch.utils.data.DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4)
+
+    hidden_size = 500
+    emb_dim = 300
+
+    model = Seq2SeqSemanticParser(input_indexer, output_indexer, emb_dim, hidden_size)
+
+    LR = 0.001
+    optimizer = torch.optim.Adam([{'params':model.encoder.parameters()},
+                              {'params':model.output_emb.parameters()},
+                              {'params':model.decoder.parameters()},
+                              {'params':model.input_emb.parameters()}],
+                              lr=LR)
+
+    teacher_forcing = True
+    NUM_EPOCHS = 60
+    loss_fn = torch.nn.CrossEntropyLoss()
+
+    for k in range(NUM_EPOCHS):
+        loss_epoch = []
+        model.input_emb.train()
+        model.encoder.train()
+        model.output_emb.train()
+        model.decoder.train()
+
+        t1 = time.time()
+        for batch in dataset_loader:
+            optimizer.zero_grad()
+            loss_batch = 0
+            embedded_input = model.input_emb(batch[1])
+            encoder_out, (h,c) = model.encoder(embedded_input, batch[0])
+            for i in range(encoder_out.shape[1]):
+                start = model.output_emb(torch.LongTensor([[output_indexer.index_of(SOS_SYMBOL)]]))
+                (h1,c1) = (h[i].unsqueeze(0).unsqueeze(0), c[i].unsqueeze(0).unsqueeze(0))
+                for j in range(batch[2][i]):
+                    cell_out, _,(h1,c1) = model.decoder(start,h1,c1,1,encoder_out[:batch[0][i],i,:])
+                    ind = torch.argmax(cell_out)
+                    if teacher_forcing:
+                        ind = batch[3][i][j]
+                    start = model.output_emb(ind.unsqueeze(0).unsqueeze(0))
+                    loss_batch += loss_fn(cell_out, batch[3][i][j].unsqueeze(0).detach())
+            loss_epoch.append(loss_batch)
+            loss_batch.backward()
+            optimizer.step()
+        print("Time:",time.time()-t1)
+        print("Epoch {}:{}".format(k,sum(loss_epoch)/len(loss_epoch)))
+        loss_epoch = []
+
+    return model
