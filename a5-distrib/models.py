@@ -209,6 +209,26 @@ class RNNEncoder(nn.Module):
 ###################################################################################################################
 # End optional classes
 ###################################################################################################################
+class RNNDecoder(nn.Module):
+    def __init__(self, input_size: int, hidden_size: int, num_output: int):
+        super(RNNDecoder, self).__init__()
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.fc = nn.Linear(hidden_size, num_output, bias=True)
+        self.rnn = nn.LSTM(input_size, hidden_size, num_layers=1, batch_first=True,
+                               dropout=0., bidirectional=False)
+
+    def sent_lens_to_mask(self, lens, max_length):
+        return torch.from_numpy(np.asarray([[1 if j < lens.data[i].item() else 0 for j in range(0, max_length)] for i in range(0, lens.shape[0])]))
+
+    def forward(self, word, h, c, input_lens, encoder):
+        packed_embedding = nn.utils.rnn.pack_padded_sequence(word, input_lens, batch_first=True, enforce_sorted=False)
+        output, (h,c) = self.rnn(packed_embedding,(h,c))
+        output, sent_lens = nn.utils.rnn.pad_packed_sequence(output)
+        max_length = torch.max(input_lens)
+        context_mask = self.sent_lens_to_mask(sent_lens, max_length)
+        cell_out = self.fc(output.squeeze(0))
+        return cell_out, context_mask, (h,c)
 
 
 def make_padded_input_tensor(exs: List[Example], input_indexer: Indexer, max_len: int, reverse_input=False) -> np.ndarray:
@@ -269,4 +289,6 @@ def train_model_encdec(train_data: List[Example], dev_data: List[Example], input
 
     # First create a model. Then loop over epochs, loop over examples, and given some indexed words
     # call your seq-to-seq model, accumulate losses, update parameters
+
+
     raise Exception("Implement the rest of me to train your encoder-decoder model")
