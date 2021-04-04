@@ -9,7 +9,6 @@ from lf_evaluator import *
 import numpy as np
 from typing import List
 import time
-from tqdm import tqdm
 
 def add_models_args(parser):
     """
@@ -108,9 +107,9 @@ class Seq2SeqSemanticParser(nn.Module):
         # raise Exception("implement me!")
 
     def decode(self, test_data: List[Example]) -> List[List[Derivation]]:
-        ans =  []
-        for ex in tqdm(test_data):
-            tmp  = []
+        res =  []
+        for ex in test_data:
+            start_word  = []
             embedded = self.input_emb(torch.LongTensor(ex.x_indexed).unsqueeze(0))
             x = torch.LongTensor([len(ex.x_indexed)])
             enc_out, _, (h,c) = self.encoder(embedded, x)
@@ -118,20 +117,19 @@ class Seq2SeqSemanticParser(nn.Module):
             p = 0
             h = h.unsqueeze(0)
             c = c.unsqueeze(0)
-            # print("start loop")
+            try_times = 0
             while True:
                 emb = self.output_emb(torch.LongTensor([[start]]))
                 cell_out, _, (h,c) = self.decoder(emb,h,c,torch.LongTensor([1]),enc_out[:len(ex.x_indexed),:].permute([1,0,2]))
                 start = torch.argmax(cell_out)
-                p += torch.max(F.log_softmax(cell_out,dim=1))
-                # print("finish decoder")
-                # print(start.item())
-                # print(self.output_indexer.index_of(EOS_SYMBOL))
-                if start.item() == self.output_indexer.index_of(EOS_SYMBOL):
+                p += torch.max(F.log_softmax(cell_out, dim=1))
+                try_times += 1
+                if (start.item() == self.output_indexer.index_of(EOS_SYMBOL)) or try_times > 100:
                     break
-                tmp.append(start.item())
-            ans.append([Derivation(ex,np.exp(p.detach()), list(map(lambda x: self.output_indexer.get_object(x),tmp)))])
-        return ans
+                start_word.append(start.item())
+            # print(try_times)
+            res.append([Derivation(ex, np.exp(p.detach()), list(map(lambda x: self.output_indexer.get_object(x),start_word)))])
+        return res
 
     def encode_input(self, x_tensor, inp_lens_tensor):
         """
@@ -369,7 +367,7 @@ def train_model_encdec(train_data: List[Example], dev_data: List[Example], input
     hidden_size = 500
     emb_dim = 300
     LR = 0.001
-    NUM_EPOCHS = 10
+    NUM_EPOCHS = 15
 
     input_len = np.asarray([len(ex.x_indexed) for ex in train_data])
     input_len = torch.LongTensor(input_len)
@@ -404,7 +402,7 @@ def train_model_encdec(train_data: List[Example], dev_data: List[Example], input
 
         t = time.time()
 
-        for batch in tqdm(dataset_loader):
+        for batch in dataset_loader:
             optimizer.zero_grad()
             x_tensor, inp_lens_tensor, y_tensor, out_lens_tensor = batch[1], batch[0], batch[3], batch[2]
             loss_batch  = model(x_tensor, inp_lens_tensor, y_tensor, out_lens_tensor)
@@ -413,6 +411,6 @@ def train_model_encdec(train_data: List[Example], dev_data: List[Example], input
             optimizer.step()
 
         print("Time:",time.time()-t)
-        print(f"Epoch {epoch}:{sum(loss_epoch)/len(loss_epoch)}")
+        print(f"Epoch {epoch}:{np.sum(loss_epoch)/len(loss_epoch)}")
 
     return model
