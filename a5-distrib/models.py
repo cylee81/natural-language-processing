@@ -9,7 +9,7 @@ from lf_evaluator import *
 import numpy as np
 from typing import List
 import time
-from tqdm import tqdm 
+from tqdm import tqdm
 
 def add_models_args(parser):
     """
@@ -76,10 +76,11 @@ class Seq2SeqSemanticParser(nn.Module):
         self.output_indexer = output_indexer
 
         self.input_emb = EmbeddingLayer(emb_dim, len(input_indexer), embedding_dropout)
-        self.encoder = RNNEncoder(emb_dim, hidden_size, bidirect)
+        self.encoder = RNNEncoder(emb_dim, hidden_size, False)
 
         self.output_emb = EmbeddingLayer(emb_dim, len(output_indexer), embedding_dropout)
-        self.decoder = RNNDecoder(emb_dim, hidden_size, len(output_indexer))
+        # self.decoder = RNNDecoder(emb_dim, hidden_size, len(output_indexer))
+        self.decoder = RNNDecoderAttention(emb_dim, hidden_size, len(output_indexer))
         # raise Exception("implement me!")
         self.loss_fn = torch.nn.CrossEntropyLoss()
 
@@ -91,38 +92,41 @@ class Seq2SeqSemanticParser(nn.Module):
         lengths aren't needed if you don't batchify the training.
         :return: loss of the batch
         """
+
         loss_batch = 0
         embedded_input = self.input_emb(x_tensor)
-        encoder_out, (h,c) = self.encoder(embedded_input, inp_lens_tensor)
+        encoder_out, _, (h,c) = self.encoder(embedded_input, inp_lens_tensor.cpu())
         for i in range(encoder_out.shape[1]):
             start = self.output_emb(torch.LongTensor([[self.output_indexer.index_of(SOS_SYMBOL)]]))
             (h1,c1) = (h[i].unsqueeze(0).unsqueeze(0), c[i].unsqueeze(0).unsqueeze(0))
             for j in range(out_lens_tensor[i]):
-                cell_out, _,(h1,c1) = self.decoder(start,h1,c1,1,encoder_out[:x_tensor[i],i,:])
-                # ind = torch.argmax(cell_out)
+                cell_out, _,(h1,c1) = self.decoder(start,h1,c1,(torch.tensor([1])).cpu(),encoder_out[:inp_lens_tensor[i],i,:].unsqueeze(0))
                 ind = y_tensor[i][j]
-                start = decoder_embedding(ind.unsqueeze(0).unsqueeze(0))
-            loss_batch += loss_fn(cell_out, y_tensor[i][j].unsqueeze(0).detach())
-
+                start = self.output_emb(ind.unsqueeze(0).unsqueeze(0))
+                loss_batch += self.loss_fn(cell_out, y_tensor[i][j].unsqueeze(0).detach())
         return loss_batch
         # raise Exception("implement me!")
 
     def decode(self, test_data: List[Example]) -> List[List[Derivation]]:
         ans =  []
-        for ex in test_data:
+        for ex in tqdm(test_data):
             tmp  = []
             embedded = self.input_emb(torch.LongTensor(ex.x_indexed).unsqueeze(0))
             x = torch.LongTensor([len(ex.x_indexed)])
-            enc_out,_, (h,c) = self.encoder(embedded, x)
+            enc_out, _, (h,c) = self.encoder(embedded, x)
             start = self.output_indexer.index_of(SOS_SYMBOL)
             p = 0
             h = h.unsqueeze(0)
             c = c.unsqueeze(0)
+            # print("start loop")
             while True:
                 emb = self.output_emb(torch.LongTensor([[start]]))
-                cell_out, _, (h,c) = self.decoder(emb,h,c,torch.LongTensor([1]),enc_out[:len(ex.x_indexed),:])
+                cell_out, _, (h,c) = self.decoder(emb,h,c,torch.LongTensor([1]),enc_out[:len(ex.x_indexed),:].permute([1,0,2]))
                 start = torch.argmax(cell_out)
                 p += torch.max(F.log_softmax(cell_out,dim=1))
+                # print("finish decoder")
+                # print(start.item())
+                # print(self.output_indexer.index_of(EOS_SYMBOL))
                 if start.item() == self.output_indexer.index_of(EOS_SYMBOL):
                     break
                 tmp.append(start.item())
@@ -269,6 +273,39 @@ class RNNDecoder(nn.Module):
         cell_out = self.fc(output.squeeze(0))
         return cell_out, context_mask, (h,c)
 
+class RNNDecoderAttention(nn.Module):
+    def __init__(self, input_size: int, hidden_size: int, num_output: int):
+        super(RNNDecoderAttention, self).__init__()
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.fc = nn.Linear(2*hidden_size, num_output, bias=True)
+        self.rnn = nn.LSTM(input_size, hidden_size, num_layers=1, batch_first=True,
+                               dropout=0., bidirectional=False)
+
+    def sent_lens_to_mask(self, lens, max_length):
+        return torch.from_numpy(np.asarray([[1 if j < lens.data[i].item() else 0 for j in range(0, max_length)] for i in range(0, lens.shape[0])]))
+
+    def forward(self, word, h, c, input_lens, enc_outputs):
+        t1 = time.time()
+        lstm_output, (h,c) = self.rnn(word,(h,c))
+        t2 = time.time()
+        # print(f"rnn: {t2-t1}")
+        # print(word.shape)
+        # print(lstm_output.shape)
+        # print(enc_outputs.shape)
+        ratios = torch.bmm(enc_outputs, lstm_output.permute([0,2,1]))
+        t3 = time.time()
+        # print(f"bmm: {t3-t2}")
+        prob = F.softmax(ratios, dim=1)
+        enc_outputs = enc_outputs.squeeze(0)
+        attended = torch.matmul(enc_outputs.permute([1,0]),prob).permute([0,2,1])
+        t4 = time.time()
+        # print(f"matmul: {t4-t3}")
+        concat = torch.cat([lstm_output, attended],dim=2).squeeze(0)
+        cell_out = self.fc(concat)
+        t5 = time.time()
+        # print(f"fc: {t5-t4}")
+        return cell_out, [], (h,c)
 
 def make_padded_input_tensor(exs: List[Example], input_indexer: Indexer, max_len: int, reverse_input=False) -> np.ndarray:
     """
@@ -330,6 +367,10 @@ def train_model_encdec(train_data: List[Example], dev_data: List[Example], input
     # call your seq-to-seq model, accumulate losses, update parameters
 
     BATCH_SIZE=4
+    hidden_size = 500
+    emb_dim = 300
+    LR = 0.001
+    NUM_EPOCHS = 10
 
     input_len = np.asarray([len(ex.x_indexed) for ex in train_data])
     input_len = torch.LongTensor(input_len)
@@ -339,27 +380,20 @@ def train_model_encdec(train_data: List[Example], dev_data: List[Example], input
     output_len = torch.LongTensor(output_len)
     all_train_output_data = torch.LongTensor(all_train_output_data)
 
-    input_len.requires_grad_(False)
-    all_train_input_data.requires_grad_(False)
-    output_len.requires_grad_(False)
-    all_train_output_data.requires_grad_(False)
     dataset = torch.utils.data.TensorDataset(input_len, all_train_input_data, output_len, all_train_output_data)
     dataset_loader = torch.utils.data.DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4)
 
-    hidden_size = 500
-    emb_dim = 300
-
     model = Seq2SeqSemanticParser(input_indexer, output_indexer, emb_dim, hidden_size)
 
-    LR = 0.001
-    optimizer = torch.optim.Adam([{'params':model.encoder.parameters()},
-                                {'params':model.output_emb.parameters()},
-                                {'params':model.decoder.parameters()},
-                                {'params':model.input_emb.parameters()}],
-                                lr=LR)
-
-    NUM_EPOCHS = 10
-    loss_fn = torch.nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(
+        [
+            {'params':model.encoder.parameters()},
+            {'params':model.output_emb.parameters()},
+            {'params':model.decoder.parameters()},
+            {'params':model.input_emb.parameters()}
+        ],
+        lr=LR
+    )
 
     for k in range(NUM_EPOCHS):
         loss_epoch = []
@@ -369,25 +403,16 @@ def train_model_encdec(train_data: List[Example], dev_data: List[Example], input
         model.decoder.train()
 
         t1 = time.time()
+
         for batch in tqdm(dataset_loader):
             optimizer.zero_grad()
-            loss_batch = 0
-            embedded_input = model.input_emb(batch[1])
-            encoder_out, _ ,  (h,c) = model.encoder(embedded_input, batch[0].cpu())
-            for i in range(encoder_out.shape[1]):
-                start = model.output_emb(torch.LongTensor([[output_indexer.index_of(SOS_SYMBOL)]]))
-                (h1,c1) = (h[i].unsqueeze(0).unsqueeze(0), c[i].unsqueeze(0).unsqueeze(0))
-                for j in range(batch[2][i]):
-                    cell_out, _,(h1,c1) = model.decoder(start,h1,c1,(torch.tensor([1])).cpu(),encoder_out[:batch[0][i],i,:])
-                    # ind = torch.argmax(cell_out)
-                    ind = batch[3][i][j]
-                    start = model.output_emb(ind.unsqueeze(0).unsqueeze(0))
-                    loss_batch += loss_fn(cell_out, batch[3][i][j].unsqueeze(0).detach())
+            x_tensor, inp_lens_tensor, y_tensor, out_lens_tensor = batch[1], batch[0], batch[3], batch[2]
+            loss_batch  = model(x_tensor, inp_lens_tensor, y_tensor, out_lens_tensor)
             loss_epoch.append(loss_batch)
             loss_batch.backward()
             optimizer.step()
+
         print("Time:",time.time()-t1)
         print("Epoch {}:{}".format(k,sum(loss_epoch)/len(loss_epoch)))
-        loss_epoch = []
 
     return model
