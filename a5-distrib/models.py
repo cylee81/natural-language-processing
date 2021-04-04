@@ -265,7 +265,12 @@ class RNNDecoder(nn.Module):
         return torch.from_numpy(np.asarray([[1 if j < lens.data[i].item() else 0 for j in range(0, max_length)] for i in range(0, lens.shape[0])]))
 
     def forward(self, word, h, c, input_lens, encoder):
-        packed_embedding = nn.utils.rnn.pack_padded_sequence(word, input_lens, batch_first=True, enforce_sorted=False)
+        packed_embedding = nn.utils.rnn.pack_padded_sequence(
+            word,
+            input_lens,
+            batch_first=True,
+            enforce_sorted=False,
+        )
         output, (h,c) = self.rnn(packed_embedding,(h,c))
         output, sent_lens = nn.utils.rnn.pad_packed_sequence(output)
         max_length = torch.max(input_lens)
@@ -279,33 +284,27 @@ class RNNDecoderAttention(nn.Module):
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.fc = nn.Linear(2*hidden_size, num_output, bias=True)
-        self.rnn = nn.LSTM(input_size, hidden_size, num_layers=1, batch_first=True,
-                               dropout=0., bidirectional=False)
+        self.rnn = nn.LSTM(
+            input_size,
+            hidden_size,
+            num_layers=1,
+            batch_first=True,
+            dropout=0.,
+            bidirectional=False
+        )
 
     def sent_lens_to_mask(self, lens, max_length):
         return torch.from_numpy(np.asarray([[1 if j < lens.data[i].item() else 0 for j in range(0, max_length)] for i in range(0, lens.shape[0])]))
 
     def forward(self, word, h, c, input_lens, enc_outputs):
-        t1 = time.time()
         lstm_output, (h,c) = self.rnn(word,(h,c))
-        t2 = time.time()
-        # print(f"rnn: {t2-t1}")
-        # print(word.shape)
-        # print(lstm_output.shape)
-        # print(enc_outputs.shape)
         ratios = torch.bmm(enc_outputs, lstm_output.permute([0,2,1]))
-        t3 = time.time()
-        # print(f"bmm: {t3-t2}")
         prob = F.softmax(ratios, dim=1)
         enc_outputs = enc_outputs.squeeze(0)
-        attended = torch.matmul(enc_outputs.permute([1,0]),prob).permute([0,2,1])
-        t4 = time.time()
-        # print(f"matmul: {t4-t3}")
-        concat = torch.cat([lstm_output, attended],dim=2).squeeze(0)
-        cell_out = self.fc(concat)
-        t5 = time.time()
-        # print(f"fc: {t5-t4}")
-        return cell_out, [], (h,c)
+        atten = torch.matmul(enc_outputs.permute([1,0]),prob).permute([0,2,1])
+        concat = torch.cat([lstm_output, atten],dim=2).squeeze(0)
+        res = self.fc(concat)
+        return res, [], (h,c)
 
 def make_padded_input_tensor(exs: List[Example], input_indexer: Indexer, max_len: int, reverse_input=False) -> np.ndarray:
     """
@@ -395,14 +394,15 @@ def train_model_encdec(train_data: List[Example], dev_data: List[Example], input
         lr=LR
     )
 
-    for k in range(NUM_EPOCHS):
+    for epoch in range(NUM_EPOCHS):
+
         loss_epoch = []
         model.input_emb.train()
         model.encoder.train()
         model.output_emb.train()
         model.decoder.train()
 
-        t1 = time.time()
+        t = time.time()
 
         for batch in tqdm(dataset_loader):
             optimizer.zero_grad()
@@ -412,7 +412,7 @@ def train_model_encdec(train_data: List[Example], dev_data: List[Example], input
             loss_batch.backward()
             optimizer.step()
 
-        print("Time:",time.time()-t1)
-        print("Epoch {}:{}".format(k,sum(loss_epoch)/len(loss_epoch)))
+        print("Time:",time.time()-t)
+        print(f"Epoch {epoch}:{sum(loss_epoch)/len(loss_epoch)}")
 
     return model
