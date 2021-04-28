@@ -3,7 +3,7 @@
 Author:
     Shrey Desai and Yasumasa Onoe
 """
-
+import spacy
 import collections
 import itertools
 import torch
@@ -11,11 +11,42 @@ import torch
 from torch.utils.data import Dataset
 from random import shuffle
 from utils import cuda, load_dataset
-
+from nltk.corpus import stopwords
+import nltk
+nltk.download('stopwords')
 
 PAD_TOKEN = '[PAD]'
 UNK_TOKEN = '[UNK]'
 
+nlp = spacy.load("en_core_web_sm")
+
+NER_LABELS = [
+    'CARDINAL',
+    'DATE',
+    'EVENT',
+    'FAC',
+    'GPE',
+    'LANGUAGE',
+    'LAW',
+    'LOC',
+    'MONEY',
+    'NORP',
+    'ORDINAL',
+    'ORG',
+    'PERCENT',
+    'PERSON',
+    'PRODUCT',
+    'QUANTITY',
+    'TIME',
+    'WORK_OF_ART'
+]
+
+NER_MAPPINGS = {NER_LABELS[idx]: idx for idx in range(len(NER_LABELS))}
+
+def map_ner_label_to_idx(ner_label):
+    if ner_label in NER_MAPPINGS:
+        return NER_MAPPINGS[ner_label]
+    return len(NER_LABELS)
 
 class Vocabulary:
     """
@@ -63,7 +94,7 @@ class Vocabulary:
         ][:vocab_size]
         words = [PAD_TOKEN, UNK_TOKEN] + top_words
         return words
-    
+
     def __len__(self):
         return len(self.words)
 
@@ -177,7 +208,6 @@ class QADataset(Dataset):
                 samples.append(
                     (qid, passage, question, answer_start, answer_end)
                 )
-                
         return samples
 
     def _create_data_generator(self, shuffle_examples=False):
@@ -203,9 +233,52 @@ class QADataset(Dataset):
         questions = []
         start_positions = []
         end_positions = []
+        ner_types = []
+
         for idx in example_idxs:
             # Unpack QA sample and tokenize passage/question.
             qid, passage, question, answer_start, answer_end = self.samples[idx]
+
+            raw_passage = ' '.join(passage)
+
+                        # print(passage)
+            answer = passage[answer_start:answer_end+1]
+            ner_type = None
+            passage_ner_types = nlp(raw_passage)
+
+            filtered_answer_lst = [word for word in answer if not word in stopwords.words()]
+            new_passage = []
+
+            start_sent = 0
+            contains_entity = False
+
+            for idx,w in enumerate(passage):
+                is_entity = False
+                for ent in passage_ner_types.ents:
+                     # print(ent.start, ent.end)
+                     if ent.start <= idx and ent.end > idx :
+                         is_entity = True
+                         break
+
+                contains_entity = contains_entity or is_entity
+                if w == '.':
+                    if contains_entity:
+                        new_passage.extend(passage[start_sent:idx + 1])
+                    start_sent = idx + 1
+                    contains_entity = False
+
+            passage = new_passage
+
+            for ent in passage_ner_types.ents:
+                if all([w in ent.text for w in filtered_answer_lst]):
+                    ner_type = ent.label_
+                    break
+
+            if ner_type is None:
+                ner_type = torch.tensor([len(NER_LABELS)])
+            else:
+                ner_type = map_ner_label_to_idx(ner_type)
+                ner_type = torch.tensor(ner_type)
 
             # Convert words to tensor.
             passage_ids = torch.tensor(
@@ -222,8 +295,8 @@ class QADataset(Dataset):
             questions.append(question_ids)
             start_positions.append(answer_start_ids)
             end_positions.append(answer_end_ids)
-
-        return zip(passages, questions, start_positions, end_positions)
+            ner_types.append(ner_type)
+        return zip(passages, questions, start_positions, end_positions, ner_types)
 
     def _create_batches(self, generator, batch_size):
         """
@@ -239,6 +312,7 @@ class QADataset(Dataset):
         """
         current_batch = [None] * batch_size
         no_more_data = False
+        ner_types = torch.zeros(bsz)
         # Loop through all examples.
         while True:
             bsz = batch_size
@@ -266,6 +340,8 @@ class QADataset(Dataset):
                 questions.append(current_batch[ii][1])
                 start_positions[ii] = current_batch[ii][2]
                 end_positions[ii] = current_batch[ii][3]
+                ner_types[ii] = current_batch[ii][4]
+
                 max_passage_length = max(
                     max_passage_length, len(current_batch[ii][0])
                 )
@@ -288,7 +364,8 @@ class QADataset(Dataset):
                 'passages': cuda(self.args, padded_passages).long(),
                 'questions': cuda(self.args, padded_questions).long(),
                 'start_positions': cuda(self.args, start_positions).long(),
-                'end_positions': cuda(self.args, end_positions).long()
+                'end_positions': cuda(self.args, end_positions).long(),
+                'ner_types': cuda(self.args, ner_types).long()
             }
 
             if no_more_data:
@@ -321,6 +398,6 @@ class QADataset(Dataset):
             tokenizer: If `True`, shuffle examples. Default: `False`
         """
         self.tokenizer = tokenizer
-    
+
     def __len__(self):
         return len(self.samples)

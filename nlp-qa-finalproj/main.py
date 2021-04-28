@@ -290,6 +290,7 @@ def train(args, epoch, model, dataset):
         Training cross-entropy loss normalized across all samples.
     """
     # Set the model in "train" mode.
+    print("set model to train mode")
     model.train()
 
     # Cumulative loss and steps.
@@ -305,6 +306,7 @@ def train(args, epoch, model, dataset):
 
     # Set up training dataloader. Creates `args.batch_size`-sized
     # batches from available samples.
+    print("tqdm")
     train_dataloader = tqdm(
         dataset.get_batch(shuffle_examples=args.shuffle_examples),
         **_TQDM_OPTIONS,
@@ -516,7 +518,7 @@ def main(args):
             if eval_loss < best_eval_loss:
                 best_eval_loss = eval_loss
                 torch.save(model.state_dict(), args.model_path)
-            
+
             print(
                 f'epoch = {epoch} | '
                 f'train loss = {train_loss:.6f} | '
