@@ -7,10 +7,17 @@ import spacy
 import collections
 import itertools
 import torch
+from tqdm import tqdm
+import time, pickle, os
 
 from torch.utils.data import Dataset
 from random import shuffle
 from utils import cuda, load_dataset
+
+from joblib import Parallel, delayed
+import spacy
+nlp = spacy.load("en_core_web_sm")
+
 from nltk.corpus import stopwords
 import nltk
 nltk.download('stopwords')
@@ -19,6 +26,102 @@ PAD_TOKEN = '[PAD]'
 UNK_TOKEN = '[UNK]'
 
 nlp = spacy.load("en_core_web_sm")
+stop_word = stopwords.words()
+
+def _get(idx, samples, passage_ner_types, stopwordss, token):
+
+    # nltk.download('stopwords')
+    PAD_TOKEN = '[PAD]'
+    UNK_TOKEN = '[UNK]'
+
+    NER_LABELS = [
+    'CARDINAL',
+    'DATE',
+    'EVENT',
+    'FAC',
+    'GPE',
+    'LANGUAGE',
+    'LAW',
+    'LOC',
+    'MONEY',
+    'NORP',
+    'ORDINAL',
+    'ORG',
+    'PERCENT',
+    'PERSON',
+    'PRODUCT',
+    'QUANTITY',
+    'TIME',
+    'WORK_OF_ART'
+]
+
+    NER_MAPPINGS = {NER_LABELS[idx]: idx for idx in range(len(NER_LABELS))}
+
+    def map_ner_label_to_idx(ner_label):
+        if ner_label in NER_MAPPINGS:
+            return NER_MAPPINGS[ner_label]
+        return len(NER_LABELS)
+
+    qid, passage, question, answer_start, answer_end = samples[idx]
+
+    old_passage = passage
+    old_question = question
+    # Convert words to tensor.
+    passage_ids = torch.tensor(
+        token.convert_tokens_to_ids(passage)
+    )
+    # print("convert2")
+    question_ids = torch.tensor(
+        token.convert_tokens_to_ids(question)
+    )
+    answer_start_ids = torch.tensor(answer_start)
+    answer_end_ids = torch.tensor(answer_end)
+
+    answer = passage[answer_start:answer_end+1]
+    ner_type = None
+
+    filtered_answer_lst = []
+    for word in answer:
+        if not len(word) > 0: continue
+        if word in stopwordss: continue
+        filtered_answer_lst.append(word)
+
+    new_passage = []
+
+    start_sent = 0
+    contains_entity = False
+
+    t1 = time.time()
+
+    for idx,w in enumerate(passage):
+        is_entity = False
+        for ent in passage_ner_types.ents:
+            if ent.start > idx:
+                break
+                # print(ent.start, ent.end)
+            if ent.start <= idx and ent.end > idx :
+                is_entity = True
+                break
+
+        contains_entity = contains_entity or is_entity
+        if w == '.':
+            if contains_entity:
+                new_passage.extend(passage[start_sent:idx + 1])
+            start_sent = idx + 1
+            contains_entity = False
+
+    passage = new_passage
+    for ent in passage_ner_types.ents:
+        if all([w in ent.text for w in filtered_answer_lst]):
+            ner_type = ent.label_
+            break
+    if ner_type is None:
+        ner_type = torch.tensor([len(NER_LABELS)])
+    else:
+        ner_type = map_ner_label_to_idx(ner_type)
+        ner_type = torch.tensor(ner_type)
+
+    return passage_ids, question_ids, answer_start_ids, answer_end_ids, ner_type, old_passage, old_question
 
 NER_LABELS = [
     'CARDINAL',
@@ -234,69 +337,59 @@ class QADataset(Dataset):
         start_positions = []
         end_positions = []
         ner_types = []
+        samples = self.samples.copy()
+        raw_passages = []
+        raw_answers = []
 
-        for idx in example_idxs:
-            # Unpack QA sample and tokenize passage/question.
-            qid, passage, question, answer_start, answer_end = self.samples[idx]
+        # for idx in tqdm(example_idxs):
+        raw_passage = []
+        for idx in tqdm(example_idxs):
+            _, passage, _, _, _ = samples[idx]
+            raw_passage.append(" ".join(passage))
 
-            raw_passage = ' '.join(passage)
-
-                        # print(passage)
-            answer = passage[answer_start:answer_end+1]
-            ner_type = None
-            passage_ner_types = nlp(raw_passage)
-
-            filtered_answer_lst = [word for word in answer if not word in stopwords.words()]
-            new_passage = []
-
-            start_sent = 0
-            contains_entity = False
-
-            for idx,w in enumerate(passage):
-                is_entity = False
-                for ent in passage_ner_types.ents:
-                     # print(ent.start, ent.end)
-                     if ent.start <= idx and ent.end > idx :
-                         is_entity = True
-                         break
-
-                contains_entity = contains_entity or is_entity
-                if w == '.':
-                    if contains_entity:
-                        new_passage.extend(passage[start_sent:idx + 1])
-                    start_sent = idx + 1
-                    contains_entity = False
-
-            passage = new_passage
-
-            for ent in passage_ner_types.ents:
-                if all([w in ent.text for w in filtered_answer_lst]):
-                    ner_type = ent.label_
-                    break
-
-            if ner_type is None:
-                ner_type = torch.tensor([len(NER_LABELS)])
+        if self.args.mode == "train":
+            if os.path.isfile(self.args.train_pickle_path):
+                print(f"Loading pickle from: {self.args.train_pickle_path}")
+                with open(self.args.train_pickle_path, 'rb') as handle:
+                    passage_ner_types = pickle.load(handle)
             else:
-                ner_type = map_ner_label_to_idx(ner_type)
-                ner_type = torch.tensor(ner_type)
+                t1 = time.time()
+                passage_ner_types = list(nlp.pipe(raw_passage, n_process=-1))
+                print(f"Saving pickle to: {self.args.train_pickle_path}")
+                with open(self.args.train_pickle_path, 'wb') as handle:
+                    pickle.dump(passage_ner_types, handle, protocol=pickle.HIGHEST_PROTOCOL)
+                print(f"it takes {time.time()-t1}")
 
-            # Convert words to tensor.
-            passage_ids = torch.tensor(
-                self.tokenizer.convert_tokens_to_ids(passage)
-            )
-            question_ids = torch.tensor(
-                self.tokenizer.convert_tokens_to_ids(question)
-            )
-            answer_start_ids = torch.tensor(answer_start)
-            answer_end_ids = torch.tensor(answer_end)
+        if self.args.mode == "dev":
+            if os.path.isfile(self.args.dev_pickle_path):
+                print(f"Loading pickle from: {self.args.dev_pickle_path}")
+                with open(self.args.dev_pickle_path, 'rb') as handle:
+                    passage_ner_types = pickle.load(handle)
+            else:
+                t1 = time.time()
+                passage_ner_types = list(nlp.pipe(raw_passage, n_process=-1))
+                print(f"Saving pickle to: {self.args.dev_pickle_path}")
+                with open(self.args.dev_pickle_path, 'wb') as handle:
+                    pickle.dump(passage_ner_types, handle, protocol=pickle.HIGHEST_PROTOCOL)
+                print(f"it takes {time.time()-t1}")
 
-            # Store each part in an independent list.
-            passages.append(passage_ids)
-            questions.append(question_ids)
-            start_positions.append(answer_start_ids)
-            end_positions.append(answer_end_ids)
-            ner_types.append(ner_type)
-        return zip(passages, questions, start_positions, end_positions, ner_types)
+        # print(f"it takes {time.time()-t1}")
+        res = Parallel(n_jobs=5, backend="threading")(delayed(_get)(i, samples, passage_ner_types[i], stop_word, self.tokenizer)for i in example_idxs)
+
+        for re in tqdm(res):
+            passages.append(re[0])
+            questions.append(re[1])
+            start_positions.append(re[2])
+            end_positions.append(re[3])
+            ner_types.append(re[4])
+            raw_passages.append(re[5])
+            raw_answers.append(re[6])
+            # questions.append(question_ids)
+            # start_positions.append(answer_start_ids)
+            # end_positions.append(answer_end_ids)
+            # ner_types.append(ner_type)
+
+        return zip(passages, questions, start_positions, end_positions, ner_types, raw_passages, raw_answers)
 
     def _create_batches(self, generator, batch_size):
         """
@@ -312,7 +405,7 @@ class QADataset(Dataset):
         """
         current_batch = [None] * batch_size
         no_more_data = False
-        ner_types = torch.zeros(bsz)
+        ner_types = torch.zeros(batch_size)
         # Loop through all examples.
         while True:
             bsz = batch_size
@@ -330,6 +423,8 @@ class QADataset(Dataset):
 
             passages = []
             questions = []
+            raw_passages = []
+            raw_questions = []
             start_positions = torch.zeros(bsz)
             end_positions = torch.zeros(bsz)
             max_passage_length = 0
@@ -341,6 +436,8 @@ class QADataset(Dataset):
                 start_positions[ii] = current_batch[ii][2]
                 end_positions[ii] = current_batch[ii][3]
                 ner_types[ii] = current_batch[ii][4]
+                raw_passages.append(current_batch[ii][5])
+                raw_questions.append(current_batch[ii][6])
 
                 max_passage_length = max(
                     max_passage_length, len(current_batch[ii][0])
@@ -365,7 +462,9 @@ class QADataset(Dataset):
                 'questions': cuda(self.args, padded_questions).long(),
                 'start_positions': cuda(self.args, start_positions).long(),
                 'end_positions': cuda(self.args, end_positions).long(),
-                'ner_types': cuda(self.args, ner_types).long()
+                'ner_types': cuda(self.args, ner_types).long(),
+                'raw_passages': raw_passages,
+                'raw_questions': raw_questions
             }
 
             if no_more_data:
