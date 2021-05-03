@@ -194,7 +194,6 @@ parser.add_argument(
     help='dropout on passage and question vectors',
 )
 
-
 def _print_arguments(args):
     """Pretty prints command line args to stdout.
 
@@ -306,7 +305,6 @@ def train(args, epoch, model, dataset):
 
     # Set up training dataloader. Creates `args.batch_size`-sized
     # batches from available samples.
-    print("tqdm")
     train_dataloader = tqdm(
         dataset.get_batch(shuffle_examples=args.shuffle_examples),
         **_TQDM_OPTIONS,
@@ -315,7 +313,6 @@ def train(args, epoch, model, dataset):
     for batch in train_dataloader:
         # Zero gradients.
         optimizer.zero_grad()
-
         # Forward inputs, calculate loss, optimize model.
         start_logits, end_logits = model(batch)
         loss = _calculate_loss(
@@ -475,6 +472,9 @@ def main(args):
     args.pad_token_id = tokenizer.pad_token_id
     print(f'vocab words = {len(vocabulary)}')
 
+    args.train_pickle_path = "train_mac.pickle"
+    args.dev_pickle_path = "dev_mac.pickle"
+
     # Print number of samples.
     print(f'train samples = {len(train_dataset)}')
     print(f'dev samples = {len(dev_dataset)}')
@@ -509,7 +509,9 @@ def main(args):
         # Begin training.
         for epoch in range(1, args.epochs + 1):
             # Perform training and evaluation steps.
+            args.mode = "train"
             train_loss = train(args, epoch, model, train_dataset)
+            args.mode = "dev"
             eval_loss = evaluate(args, epoch, model, dev_dataset)
 
             # If the model's evaluation loss yields a global improvement,
@@ -539,6 +541,7 @@ def main(args):
     if args.do_test:
         # Write predictions to the output file. Use the printed command
         # below to obtain official EM/F1 metrics.
+        args.mode = "dev"
         write_predictions(args, model, dev_dataset)
         eval_cmd = (
             'python3 evaluate.py '
