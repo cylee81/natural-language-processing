@@ -10,6 +10,7 @@ import torch.nn.functional as F
 
 from utils import cuda, load_cached_embeddings
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
+from allennlp.modules.elmo import Elmo, batch_to_ids
 
 
 def _sort_batch_by_length(tensor, sequence_lengths):
@@ -214,6 +215,13 @@ class BaselineReader(nn.Module):
         # Initialize bilinear layer for end positions (7)
         self.end_output = BilinearOutput(_hidden_dim, _hidden_dim)
 
+
+        options_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_options.json"
+        weight_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5"
+
+        #  Note the "1", since we want only 1 output representation for each token.
+        self.elmo = Elmo(options_file, weight_file, 1, dropout=0)
+
     def load_pretrained_embeddings(self, vocabulary, path):
         """
         Loads GloVe vectors and initializes the embedding matrix.
@@ -274,6 +282,12 @@ class BaselineReader(nn.Module):
         return unpacked_sequence_tensor.index_select(0, restoration_indices)
 
     def forward(self, batch):
+        elmo = self.elmo.cuda()
+        passage_character_ids = batch_to_ids(batch["passages"])
+        passage_embeddings = elmo(passage_character_ids.cuda())["elmo_representations"][0]
+        question_character_ids = batch_to_ids(batch['questions'])
+        question_embeddings = elmo(question_character_ids.cuda())["elmo_representations"][0]
+
         # Obtain masks and lengths for passage and question.
         passage_mask = (batch['passages'] != self.pad_token_id)  # [batch_size, p_len]
         question_mask = (batch['questions'] != self.pad_token_id)  # [batch_size, q_len]
@@ -281,8 +295,8 @@ class BaselineReader(nn.Module):
         question_lengths = question_mask.long().sum(-1)  # [batch_size]
 
         # 1) Embedding Layer: Embed the passage and question.
-        passage_embeddings = self.embedding(batch['passages'])  # [batch_size, p_len, p_dim]
-        question_embeddings = self.embedding(batch['questions'])  # [batch_size, q_len, q_dim]
+        # passage_embeddings = self.embedding(batch['passages'])  # [batch_size, p_len, p_dim]
+        # question_embeddings = self.embedding(batch['questions'])  # [batch_size, q_len, q_dim]
 
         # 2) Context2Query: Compute weighted sum of question embeddings for
         #        each passage word and concatenate with passage embeddings.
