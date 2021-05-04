@@ -128,11 +128,13 @@ class BilinearOutput(nn.Module):
         super().__init__()
         self.linear = nn.Linear(q_dim, p_dim)
 
-    def forward(self, p, q, p_mask):
+    def forward(self, p, q, p_mask, start_positions, end_positions, ner_type ):
         # Compute bilinear scores
         q_key = self.linear(q).unsqueeze(2)  # [batch_size, p_dim, 1]
         p_scores = torch.bmm(p, q_key).squeeze(2)  # [batch_size, p_len]
         # Assign -inf to pad tokens
+        for i in range(p_scores.shape[0]):
+            p_scores[i][start_positions[i]: end_positions[i]] *= ner_type[i]*0.1
         p_scores.data.masked_fill_(p_mask.data, -float('inf'))
         return p_scores  # [batch_size, p_len]
 
@@ -332,12 +334,12 @@ class BaselineReader(nn.Module):
 
         # 6) Start Position Pointer: Compute logits for start positions
         start_logits = self.start_output(
-            passage_hidden, question_vector, ~passage_mask
+            passage_hidden, question_vector, ~passage_mask, batch["start_positions"], batch['end_positions'], batch['ner_types']
         )  # [batch_size, p_len]
 
         # 7) End Position Pointer: Compute logits for end positions
         end_logits = self.end_output(
-            passage_hidden, question_vector, ~passage_mask
+            passage_hidden, question_vector, ~passage_mask, batch["start_positions"], batch['end_positions'], batch['ner_types']
         )  # [batch_size, p_len]
 
         return start_logits, end_logits  # [batch_size, p_len], [batch_size, p_len]
