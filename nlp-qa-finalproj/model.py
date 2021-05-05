@@ -218,12 +218,12 @@ class BaselineReader(nn.Module):
         # Initialize bilinear layer for end positions (7)
         self.end_output = BilinearOutput(_hidden_dim, _hidden_dim)
 
-        options_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_options.json"
-        weight_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5"
+        # options_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_options.json"
+        # weight_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5"
         weight_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway_5.5B/elmo_2x4096_512_2048cnn_2xhighway_5.5B_weights.hdf5"
         options_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway_5.5B/elmo_2x4096_512_2048cnn_2xhighway_5.5B_options.json"
-        #  Note the "1", since we want only 1 output representation for each token.
         self.elmo = Elmo(options_file, weight_file, 1, dropout=0)
+
     def load_pretrained_embeddings(self, vocabulary, path):
         """
         Loads GloVe vectors and initializes the embedding matrix.
@@ -254,7 +254,8 @@ class BaselineReader(nn.Module):
         self.embedding.weight.data = cuda(self.args, embeddings)
 
         return num_pretrained
-        """ 
+        """
+
     def sorted_rnn(self, sequences, sequence_lengths, rnn):
         """
         Sorts and packs inputs, then feeds them into RNN.

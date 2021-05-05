@@ -53,7 +53,7 @@ def _get(idx, samples, passage_ner_types, stopwordss, token):
     'QUANTITY',
     'TIME',
     'WORK_OF_ART'
-]
+    ]
 
     NER_MAPPINGS = {NER_LABELS[idx]: idx for idx in range(len(NER_LABELS))}
 
@@ -98,7 +98,6 @@ def _get(idx, samples, passage_ner_types, stopwordss, token):
         for ent in passage_ner_types.ents:
             if ent.start > idx:
                 break
-                # print(ent.start, ent.end)
             if ent.start <= idx and ent.end > idx :
                 is_entity = True
                 break
